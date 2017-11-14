@@ -16,7 +16,7 @@ pub fn get_membership_data_for_current_user() -> Result<hyper::Uri> {
   build_url("./User/GetMembershipsForCurrentUser/")
 }
 
-fn get_profile(m_type: super::dtos::BungieMemberType, dmid: i64) -> Result<hyper::Uri> {
+pub fn get_profile(m_type: super::dtos::BungieMemberType, dmid: i64) -> Result<hyper::Uri> {
   let path = UriTemplate::new("./Destiny2/{membershipType}/Profile/{destinyMembershipId}/")
     .set("membershipType", m_type)
     .set("destinyMembershipId", format!("{}", dmid))

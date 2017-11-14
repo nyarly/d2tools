@@ -1,3 +1,4 @@
+use errors::*;
 use uritemplate::{TemplateVar, IntoTemplateVar};
 
 #[derive(Deserialize, Debug)]
@@ -48,40 +49,50 @@ impl IntoTemplateVar for BungieMemberType {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct ResponseBody {
-  response: BodyResponse,
-  error_code: i32,
-  error_status: String,
-  message: String,
+  pub response: BodyResponse,
+  pub error_code: i32,
+  pub error_status: String,
+  pub message: String,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
-enum BodyResponse {
+pub enum BodyResponse {
   UserMembershipData(UserMembershipData),
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct UserMembershipData {
-  destiny_memberships: Vec<UserInfoCard>,
-  bungie_net_user: GeneralUser,
+pub struct UserMembershipData {
+  pub destiny_memberships: Vec<UserInfoCard>,
+  pub bungie_net_user: GeneralUser,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct GeneralUser {
-  membership_id: String,
-  unique_name: String,
-  display_name: String,
-  is_deleted: bool,
+pub struct GeneralUser {
+  pub membership_id: String,
+  pub unique_name: String,
+  pub display_name: String,
+  pub is_deleted: bool,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-struct UserInfoCard {
-  display_name: String,
+pub struct UserInfoCard {
+  pub display_name: String,
   #[serde(default)]
-  supplemental_display_name: String,
-  membership_type: i32,
-  membership_id: String,
+  pub supplemental_display_name: String,
+  pub membership_type: i32,
+  pub membership_id: String,
+}
+
+impl UserInfoCard {
+  pub fn mtype(&self) -> BungieMemberType {
+    self.membership_type.into()
+  }
+
+  pub fn id(&self) -> Result<i64> {
+    Ok(self.membership_id.parse()?)
+  }
 }

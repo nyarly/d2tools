@@ -8,6 +8,7 @@ error_chain!{
     SerError(::toml::ser::Error);
     Oauth2Error(::oauth2::TokenError);
     UrlParseError(::url::ParseError);
+    IntParseError(::std::num::ParseIntError);
     HyperParseError(::hyper::error::UriError);
     HyperError(::hyper::Error);
     SerdeJSON(::serde_json::Error);
