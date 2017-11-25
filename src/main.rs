@@ -1,3 +1,6 @@
+// for error-chain...
+#![recursion_limit="256"]
+
 #[macro_use]
 extern crate error_chain;
 
@@ -19,6 +22,8 @@ extern crate rand;
 extern crate base64;
 extern crate toml;
 extern crate serde_json;
+extern crate zip;
+extern crate rusqlite;
 
 mod errors;
 mod state;

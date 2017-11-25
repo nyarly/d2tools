@@ -1,5 +1,7 @@
 use errors::*;
 use uritemplate::{TemplateVar, IntoTemplateVar};
+use std::collections::HashMap;
+
 
 #[derive(Deserialize, Debug)]
 pub enum BungieMemberType {
@@ -42,7 +44,8 @@ impl From<i32> for BungieMemberType {
 
 impl IntoTemplateVar for BungieMemberType {
   fn into_template_var(self) -> TemplateVar {
-    TemplateVar::Scalar(format!("{}", self as i32))
+    let int: i32 = self.into();
+    TemplateVar::Scalar(format!("{}", int))
   }
 }
 
@@ -56,10 +59,76 @@ pub struct ResponseBody {
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+pub struct DebugResponseBody {
+  pub response: DestinyProfileResponse,
+  pub error_code: i32,
+  pub error_status: String,
+  pub message: String,
+}
+
+#[derive(Deserialize, Debug)]
 #[serde(untagged)]
 pub enum BodyResponse {
-  UserMembershipData(UserMembershipData),
+  User(UserMembershipData),
+  Manifest(DestinyManifest),
+  Profile(DestinyProfileResponse),
 }
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DestinyManifest {
+  pub version: String,
+  pub mobile_asset_content_path: String,
+  pub mobile_gear_asset_data_bases: Vec<GearAssetDataBaseDefinition>,
+  pub mobile_clan_banner_database_path: String,
+  pub mobile_world_content_paths: HashMap<String, String>,
+
+  #[serde(rename = "mobileGearCDN")]
+  pub mobile_gear_cdn: HashMap<String, String>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DestinyProfileResponse {
+  pub profile_inventory: Option<InventoryComponentResponse>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryComponentResponse {
+  pub data: InventoryComponent,
+  pub privacy: i32,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryComponent {
+  pub items: Vec<Item>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Item {
+  pub item_hash: u32,
+  pub item_instance_id: Option<String>,
+  pub quantity: i32,
+}
+// omitted for the moment
+// bindStatus
+// location
+// bucketHash
+// transferStatuses
+// state
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GearAssetDataBaseDefinition {
+  version: i32,
+  path: String,
+}
+
+
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -95,4 +164,30 @@ impl UserInfoCard {
   pub fn id(&self) -> Result<i64> {
     Ok(self.membership_id.parse()?)
   }
+}
+
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryItemDefinition {
+  pub display_properties: DisplayProperties,
+
+  pub item_type_display_name: String,
+  pub item_type: i32,
+  pub item_sub_type: i32,
+  pub quality: Option<QualityBlockDefinition>,
+}
+// many fields omitted. See online docs
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayProperties {
+  pub description: String,
+  pub name: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct QualityBlockDefinition {
+  pub infusion_category_name: String,
 }

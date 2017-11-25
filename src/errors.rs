@@ -12,5 +12,7 @@ error_chain!{
     HyperParseError(::hyper::error::UriError);
     HyperError(::hyper::Error);
     SerdeJSON(::serde_json::Error);
+    ZipErr(::zip::result::ZipError);
+    Rusqlite(::rusqlite::Error);
   }
 }
