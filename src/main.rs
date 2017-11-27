@@ -21,6 +21,7 @@ extern crate oauth2;
 extern crate rand;
 extern crate base64;
 extern crate toml;
+extern crate serde;
 extern crate serde_json;
 extern crate zip;
 extern crate rusqlite;

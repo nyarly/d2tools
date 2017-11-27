@@ -2,6 +2,7 @@ use url;
 use hyper;
 use uritemplate::UriTemplate;
 use errors::*;
+use super::dtos::enums;
 
 fn root() -> Result<url::Url> {
   Ok("https://www.bungie.net/Platform/".parse()?)
@@ -20,13 +21,30 @@ pub fn get_membership_data_for_current_user() -> Result<hyper::Uri> {
   build_url("./User/GetMembershipsForCurrentUser/")
 }
 
-pub fn get_profile(m_type: super::dtos::BungieMemberType, dmid: i64) -> Result<hyper::Uri> {
+pub fn get_profile(m_type: super::dtos::enums::BungieMemberType,
+                   dmid: i64,
+                   components: &[enums::ComponentType])
+                   -> Result<hyper::Uri> {
   let path =
-    UriTemplate::new("./Destiny2/{membershipType}/Profile/{destinyMembershipId}/?components=100,\
-                      101,102,103,200,201,202,204,205,300,301,302,304,305,306,307,308,400,401,\
-                      402,500")
+    UriTemplate::new("./Destiny2/{membershipType}/Profile/{destinyMembershipId}/{?components}")
       .set("membershipType", m_type)
-      .set("destinyMembershipId", format!("{}", dmid))
+      .set("destinyMembershipId", dmid.to_string())
+      .set("components", enums::component_list(components))
+      .build();
+  build_url(&path)
+}
+
+pub fn get_item(m_type: super::dtos::enums::BungieMemberType,
+                dmid: &str,
+                instance_id: &str,
+                components: &[enums::ComponentType])
+                -> Result<hyper::Uri> {
+  let path =
+    UriTemplate::new("./Destiny2/{membershipType}/Profile/{destinyMembershipId}/Item/{itemInstanceId}/{?components}")
+      .set("membershipType", m_type)
+      .set("destinyMembershipId", dmid)
+      .set("itemInstanceId", instance_id)
+      .set("components", enums::component_list(components))
       .build();
   build_url(&path)
 }
