@@ -191,7 +191,11 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
               _ => bail!("Not an ItemResponse!")
             }
           })
-        .and_then(|mut item| { item.fetch_component_defs(&db); Ok(item) })
+        .and_then(|ref item| {
+          let mut item = item.clone();
+          item.fetch_component_defs(&db);
+          Ok(item.clone())
+        })
       }).collect::<Vec<_>>() );
       f
     });

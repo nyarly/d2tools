@@ -66,12 +66,12 @@ use rusqlite::Connection;
 use serde_json;
 
 impl ItemResponse {
-  pub fn fetch_component_defs<'g, 'f>(&'f mut self, db: &'g Connection) {
+  pub fn fetch_component_defs<'f, 'g>(&'f mut self, db: &'g Connection) {
     self.fetch_item_def(db)
       .and(self.fetch_bucket_def(db));
   }
 
-  fn fetch_item_def(&mut self, db: &Connection) -> Result<()> {
+  fn fetch_item_def<'f, 'g>(&'f mut self, db: &'g Connection) -> Result<()> {
     let mut stmt =
       db.prepare_cached("select json from DestinyInventoryItemDefinition where id = ?1")?;
     let mut rows = stmt.query(&[&(self.item_hash()?)])?;
@@ -86,7 +86,7 @@ impl ItemResponse {
     }
   }
 
-  fn fetch_bucket_def(&mut self, db: &Connection) -> Result<()> {
+  fn fetch_bucket_def<'f, 'g>(&'f mut self, db: &'g Connection) -> Result<()> {
     let mut stmt =
       db.prepare_cached("select json from DestinyInventoryBucketDefinition where id = ?1")?;
     let mut rows = stmt.query(&[&(self.bucket_hash()?)])?;
