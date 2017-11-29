@@ -1,5 +1,4 @@
 use std::fmt;
-use serde::de::{self, Visitor};
 use uritemplate::{TemplateVar, IntoTemplateVar};
 
 macro_rules! enum_number {
@@ -35,10 +34,10 @@ macro_rules! enum_number {
                     type Value = $name;
 
                     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                        formatter.write_str("signed integer")
+                        formatter.write_str("a signed integer")
                     }
 
-                    fn visit_i32<E>(self, value: i32) -> Result<$name, E>
+                    fn visit_i64<E>(self, value: i64) -> Result<$name, E>
                         where E: ::serde::de::Error
                     {
                         // Rust does not come with a simple way of converting a
@@ -50,6 +49,25 @@ macro_rules! enum_number {
                                 stringify!($name), value))),
                         }
                     }
+
+                    fn visit_i32<E>(self, value: i32) -> Result<$name, E>
+                        where E: ::serde::de::Error
+                    {
+                      self.visit_i64(value as i64)
+                    }
+
+                    fn visit_u64<E>(self, value: u64) -> Result<$name, E>
+                        where E: ::serde::de::Error
+                    {
+                      self.visit_i64(value as i64)
+                    }
+
+                    fn visit_u32<E>(self, value: u32) -> Result<$name, E>
+                        where E: ::serde::de::Error
+                    {
+                      self.visit_u64(value as u64)
+                    }
+
                 }
 
                 // Deserialize the enum from a i32.

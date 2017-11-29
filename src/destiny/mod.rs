@@ -2,7 +2,6 @@ use std::env;
 use std::io::{self,Read,Write};
 use std::fs;
 use std::path::PathBuf;
-use std::convert;
 use errors::*;
 use futures::Stream;
 use futures::future::{self,Future};
@@ -60,14 +59,16 @@ fn store_received_databases(chunk: Chunk) -> Result<()> {
   Ok(())
 }
 
-fn unshare_result<T,U: ::std::ops::Deref,E: ::std::ops::Deref>(res: ::std::result::Result<U, E>) -> Result<U::Target>
+use std::fmt::Display;
+use error_chain::ChainedError;
+
+fn unshare_result<T,U: ::std::ops::Deref,E>(res: ::std::result::Result<U, E>) -> Result<U::Target>
 where U::Target: Sized + Clone,
-      E::Target: Sized,
-      Error: convert::From<E::Target>
+      E: ::std::ops::Deref<Target=Error>,
 {
   match res {
     Ok(it) => Ok((*it).clone()),
-    Err(_) => bail!("just broken")
+    Err(e) => bail!((*e).display_chain().to_string())
   }
 }
 
@@ -117,18 +118,14 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
       )
       })
   .flatten()
-  .and_then(|_| Ok(println!("DB available")));
+  .and_then(|_| Ok(println!("DB available"))).shared();
 
   let database_name = database_path
     .then(|res| unshare_result::<String,_,_>(res))
     .and_then(|urlpath|
       cache_path(&database_name_from_path(&urlpath)?)
               .map_err(|err| Error::with_chain(err, "getting content"))
-      );
-
-  let database = database_name.join(database_stored)
-    .and_then(|(name, _)| Connection::open(name)
-              .map_err(|err| Error::with_chain(err, "opening DB connection")));
+      ).shared();
 
   let card = authd.get(urls::get_membership_data_for_current_user()?)
     .and_then(|rb| {
@@ -139,7 +136,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
             None => bail!("No memberships!"),
           }
         }
-        _ => bail!("Not a membership data!"),
+        _ => bail!(format!("Not a membership data!: {:?}", rb.response)),
       };
       res
     }).shared();
@@ -153,22 +150,23 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
                                        enums::ComponentType::CharacterInventories,
                                        enums::ComponentType::CharacterEquipment,
     ]))
-    .and_then(|url|  authd.get(url))
+    .and_then(|url|  authd.get_debug(url))
     .and_then(|profile| {
       match profile.response {
-        dtos::BodyResponse::Profile(prof) =>  prof.character_equipment.ok_or("No inventory!".into()),
-        _ => bail!("Response not a Profile!")
+        //dtos::BodyResponse::Profile(prof) =>  prof.character_equipment.ok_or("No inventory!".into()),
+        prof =>  prof.character_equipment.ok_or("No inventory!".into()),
+        _ => bail!(format!("Response not a Profile! {:?}", profile.response))
       }
     })
     .and_then(|inv_map| {
       Ok(inv_map.values().flat_map(|inv| {
-        inv.items.iter().filter_map(|it| {
+        inv.data.items.iter().filter_map(|it| {
           it.item_instance_id.clone().map(|id| id)
         })
       }).collect::<Vec<_>>())
     });
 
-  let item_urls = card
+  let work = card
     .then(|res| unshare_result::<dtos::UserInfoCard,_,_>(res))
     .join(inventory_ids)
     .and_then(|(card, ids)| {
@@ -179,11 +177,15 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
                                   enums::ComponentType::ItemStats,
         ])
       }).collect::<Result<Vec<_>>>()
-    });
+    })
+    .and_then(|urls| {
+      future::join_all(urls.iter().map(|url| {
+        let database = database_name.clone()
+          .then(|res| unshare_result::<String,_,_>(res))
+          .join(database_stored.clone() .then(|res| unshare_result::<String,_,_>(res)))
+          .and_then(|(name, _)| Connection::open(name)
+                    .map_err(|err| Error::with_chain(err, "opening DB connection")));
 
-  let work = database.join(item_urls)
-    .and_then(|(db, urls)| {
-      let f = future::join_all(urls.iter().map(|url| {
         authd.get(url.clone())
           .and_then(|full_item| {
             match full_item.response {
@@ -191,25 +193,24 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
               _ => bail!("Not an ItemResponse!")
             }
           })
-        .and_then(|ref item| {
-          let mut item = item.clone();
-          item.fetch_component_defs(&db);
-          Ok(item.clone())
+        .join(database)
+        .and_then(|(ref mut item, ref db)| {
+          item.fetch_component_defs(db);
+          let item: dtos::ItemResponse = item.clone();
+          Ok(item)
         })
-      }).collect::<Vec<_>>() );
-      f
+      }).collect::<Vec<_>>())
     });
 
     let work = work
     .map(|populated_items| {
-      let mut table = table::printer( vec![
-          table::field("Bucket Name", dtos::ItemResponse::bucket_name),
-          table::field("Item Name", dtos::ItemResponse::item_name),
-          table::field("Item Level", dtos::ItemResponse::level),
-          table::field("Primary Value", dtos::ItemResponse::stat_value),
-          table::field("Infusion Cat.", dtos::ItemResponse::infusion_category),
-        ]);
-      table.print(populated_items);
+      table::printer()
+        .field( "Bucket Name", dtos::ItemResponse::bucket_name)
+        .field("Item Name", dtos::ItemResponse::item_name)
+        .field("Item Level", dtos::ItemResponse::level)
+        .field("Primary Value", dtos::ItemResponse::stat_value)
+        .field("Infusion Cat.", dtos::ItemResponse::infusion_category)
+        .print(populated_items);
     });
 
   core.run(work)?;
@@ -219,7 +220,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
 mod table {
   use std::cmp;
 
-  pub struct Field<T> {
+  struct Field<T> {
     get_field: fn(&T) -> String,
     width: usize,
     name: String,
@@ -235,19 +236,20 @@ mod table {
     }
   }
 
-  pub fn field<T>(name: &str, get_field: fn(&T) -> String) -> Field<T> {
-    Field{ name: name.to_owned(), get_field, width: name.len(), }
-  }
-
   pub struct Printer<T> {
     fields: Vec<Field<T>>,
   }
 
-  pub fn printer<T>(fields: Vec<Field<T>>) -> Printer<T> {
-    Printer{ fields }
+  pub fn printer<T>() -> Printer<T> {
+    Printer{ fields: Vec::new() }
   }
 
   impl<T> Printer<T> {
+    pub fn field(mut self, name: &str, get_field: fn(&T) -> String) -> Printer<T> {
+      self.fields.push( Field{ name: name.to_owned(), get_field, width: name.len() });
+      self
+    }
+
     pub fn print<U: IntoIterator<Item = T> + Clone>(&mut self, ts: U) {
       for t in ts.clone() {
         for f in self.fields.iter_mut() {
@@ -358,7 +360,7 @@ impl AuthGetter {
       .and_then(|body_chunk| {
         println!("{}", String::from_utf8_lossy(&(*body_chunk)));
         let v: dtos::DebugResponseBody =
-          serde_json::from_slice(&body_chunk).chain_err(|| format!("deserializing JSON: {:?}", String::from_utf8_lossy(&(*body_chunk))))?;
+          serde_json::from_slice(&body_chunk).chain_err(|| format!("deserializing JSON: {}", String::from_utf8_lossy(&(*body_chunk))))?;
         Ok(v)
       });
       Box::new(future)

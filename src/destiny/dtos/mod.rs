@@ -47,7 +47,7 @@ pub struct DestinyManifest {
 #[serde(rename_all = "camelCase")]
 pub struct DestinyProfileResponse {
   pub profile_inventory: Option<InventoryComponentResponse>,
-  pub character_equipment: Option<HashMap<String, InventoryComponent>>,
+  pub character_equipment: Option<HashMap<String, InventoryComponentResponse>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
