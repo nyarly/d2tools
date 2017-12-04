@@ -77,6 +77,16 @@ macro_rules! enum_number {
     }
 }
 
+enum_number!(TierType {
+  Unknown = 0,
+  Currency = 1,
+  Basic = 2,
+  Common = 3,
+  Rare = 4,
+  Legendary = 5,
+  Exotic = 6,
+});
+
 enum_number!(BungieMemberType {
   TigerXbox = 1,
   TigerPsn = 2,

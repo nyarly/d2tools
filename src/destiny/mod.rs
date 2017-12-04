@@ -1,7 +1,7 @@
 use std::env;
 use std::io::{self,Read,Write};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use errors::*;
 use futures::Stream;
 use futures::future::{self,Future};
@@ -9,7 +9,6 @@ use hyper::{self, header, Body, Chunk};
 use hyper::client::{Client, Request, HttpConnector};
 use hyper_tls::HttpsConnector;
 use tokio_core::reactor::Core;
-use serde_json;
 use zip::read::ZipArchive;
 use rusqlite::Connection;
 
@@ -19,12 +18,6 @@ mod dtos;
 
 use self::dtos::enums;
 use super::state;
-
-struct AuthGetter {
-  client: Client<HttpsConnector<HttpConnector>, Body>,
-  token: String,
-  app_auth: String,
-}
 
 fn build_client(core: &Core) -> Result<Client<HttpsConnector<HttpConnector>, Body>> {
   let handle = core.handle();
@@ -59,8 +52,8 @@ fn store_received_databases(chunk: Chunk) -> Result<()> {
   Ok(())
 }
 
-use std::fmt::Display;
 use error_chain::ChainedError;
+use self::dtos::Deser;
 
 fn unshare_result<T,U: ::std::ops::Deref,E>(res: ::std::result::Result<U, E>) -> Result<U::Target>
 where U::Target: Sized + Clone,
@@ -72,6 +65,7 @@ where U::Target: Sized + Clone,
   }
 }
 
+
 pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
   let mut core = Core::new()?;
 
@@ -81,25 +75,20 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
   let content_client = build_client(&core)?;
 
   let database_path = authd.get(urls::get_manifest()?)
-    .and_then(|rb| {
-      let res: Result<_> = match rb.response {
-        dtos::BodyResponse::Manifest(mani) => {
-          mani.mobile_world_content_paths.get("en")
+    .and_then(|dl| dtos::ManifestResponseBody::deser(dl))
+    .and_then(|mrb| mrb.response.mobile_world_content_paths.get("en")
             .ok_or("No 'en' content!".into())
             .map(|rurl| rurl.clone())
-        },
-        _ => bail!("Response not a DestinyManifest!")
-      };
-      res
-    }).shared();
+    ).shared();
 
   let database_stored = database_path.clone()
     .then(|res| unshare_result::<String,_,_>(res))
     .and_then(|urlpath| {
       let dbpath = cache_path(&database_name_from_path(&urlpath)?)?;
       let urlstr = format!("https://www.bungie.net{}", urlpath);
+      println!("Expecting db at {:?}", dbpath);
       Ok(
-        if !fs::metadata(dbpath)?.is_file() {
+        if !dbpath.is_file() {
           println!("DB not present - downloading...");
           Some(
           future::lazy(move || urlstr.parse()
@@ -110,13 +99,12 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
             })
           .and_then(|res| res.body().concat2()
                     .map_err(|e| Error::with_chain(e, "assembling body from stream")))
-          .and_then(|body_chunk| store_received_databases(body_chunk))
+          .and_then(|body_chunk| store_received_databases(body_chunk).chain_err(|| "storing db"))
           )
         } else {
           None
         }
-      )
-      })
+      ) })
   .flatten()
   .and_then(|_| Ok(println!("DB available"))).shared();
 
@@ -128,20 +116,16 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
       ).shared();
 
   let card = authd.get(urls::get_membership_data_for_current_user()?)
-    .and_then(|rb| {
-      let res: Result<_> = match rb.response {
-        dtos::BodyResponse::User(data) => {
-          match data.destiny_memberships.get(0) {
-            Some(membership) => Ok(membership.clone()),
-            None => bail!("No memberships!"),
-          }
-        }
-        _ => bail!(format!("Not a membership data!: {:?}", rb.response)),
+    .and_then(|dl| dtos::UserResponseBody::deser(dl))
+    .and_then(|urb| {
+      let res: Result<_> = match urb.response.destiny_memberships.get(0) {
+        Some(membership) => Ok(membership.clone()),
+        None => bail!("No memberships!"),
       };
       res
     }).shared();
 
-  let inventory_ids = card.clone()
+  let profile = card.clone()
     .then(|res| unshare_result::<dtos::UserInfoCard,_,_>(res))
     .and_then(|card| urls::get_profile(card.membership_type, card.id()?, &[
                                        enums::ComponentType::ProfileInventories,
@@ -150,31 +134,54 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
                                        enums::ComponentType::CharacterInventories,
                                        enums::ComponentType::CharacterEquipment,
     ]))
-    .and_then(|url|  authd.get_debug(url))
-    .and_then(|profile| {
-      match profile.response {
-        //dtos::BodyResponse::Profile(prof) =>  prof.character_equipment.ok_or("No inventory!".into()),
-        prof =>  prof.character_equipment.ok_or("No inventory!".into()),
-        _ => bail!(format!("Response not a Profile! {:?}", profile.response))
-      }
-    })
-    .and_then(|inv_map| {
-      Ok(inv_map.values().flat_map(|inv| {
-        inv.data.items.iter().filter_map(|it| {
+    .and_then(|url|  authd.get(url))
+    .and_then(|dl| dtos::ProfileResponseBody::deser(dl))
+    .map(|body| body.response)
+    .shared();
+
+  let equipment_ids = profile.clone()
+    .then(|res| unshare_result::<String,_,_>(res))
+    .and_then(|profile| profile.character_equipment.ok_or("No equipment!".into()))
+    .and_then(|inv_comp| {
+      Ok(inv_comp.data.values().flat_map(|inv| {
+        inv.items.iter().filter_map(|it| {
           it.item_instance_id.clone().map(|id| id)
         })
       }).collect::<Vec<_>>())
     });
 
+  let inventory_ids = profile.clone()
+    .then(|res| unshare_result::<String,_,_>(res))
+    .and_then(|profile| profile.character_inventories.ok_or("No inventory!".into()))
+    .and_then(|inv_comp| {
+      Ok(inv_comp.data.values().flat_map(|inv| {
+        inv.items.iter().filter_map(|it| {
+          it.item_instance_id.clone().map(|id| id)
+        })
+      }).collect::<Vec<_>>())
+    });
+
+
+  let vault_ids = profile.clone()
+    .then(|res| unshare_result::<String,_,_>(res))
+    .and_then(|profile| profile.profile_inventory.ok_or("No vault!".into()))
+    .and_then(|vault| {
+      Ok(vault.data.items.iter().filter_map(|it| {
+        it.item_instance_id.clone().map(|id| id)
+      }).collect::<Vec<_>>())
+    });
+
+
   let work = card
     .then(|res| unshare_result::<dtos::UserInfoCard,_,_>(res))
-    .join(inventory_ids)
-    .and_then(|(card, ids)| {
-      ids.iter().map(|id| {
+    .join4(equipment_ids, vault_ids, inventory_ids)
+    .and_then(|(card, ids, vids, iids)| {
+      ids.iter().chain(vids.iter()).chain(iids.iter()).map(|id| {
         urls::get_item(card.membership_type, &card.membership_id, &id, &[
                                   enums::ComponentType::ItemCommonData,
                                   enums::ComponentType::ItemInstances,
                                   enums::ComponentType::ItemStats,
+                                  enums::ComponentType::ItemSockets,
         ])
       }).collect::<Result<Vec<_>>>()
     })
@@ -182,17 +189,13 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
       future::join_all(urls.iter().map(|url| {
         let database = database_name.clone()
           .then(|res| unshare_result::<String,_,_>(res))
-          .join(database_stored.clone() .then(|res| unshare_result::<String,_,_>(res)))
+          .join(database_stored.clone().then(|res| unshare_result::<String,_,_>(res)))
           .and_then(|(name, _)| Connection::open(name)
                     .map_err(|err| Error::with_chain(err, "opening DB connection")));
 
         authd.get(url.clone())
-          .and_then(|full_item| {
-            match full_item.response {
-              dtos::BodyResponse::Item(it) => Ok(it),
-              _ => bail!("Not an ItemResponse!")
-            }
-          })
+          .and_then(|dl| dtos::ItemResponseBody::deser(dl))
+          .map(|res| res.response)
         .join(database)
         .and_then(|(ref mut item, ref db)| {
           item.fetch_component_defs(db);
@@ -200,9 +203,13 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
           Ok(item)
         })
       }).collect::<Vec<_>>())
-    });
-
-    let work = work
+    })
+    .map(|mut items| {
+      items.sort_by(|left, right| {
+        left.infusion_category().cmp(&right.infusion_category()).then(left.infusion_power().cmp(&right.infusion_power()).reverse())
+      });
+      items
+    })
     .map(|populated_items| {
       table::printer()
         .field( "Bucket Name", dtos::ItemResponse::bucket_name)
@@ -210,6 +217,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
         .field("Item Level", dtos::ItemResponse::level)
         .field("Primary Value", dtos::ItemResponse::stat_value)
         .field("Infusion Cat.", dtos::ItemResponse::infusion_category)
+        .field("Infusion Power", dtos::ItemResponse::infusion_power)
         .print(populated_items);
     });
 
@@ -229,6 +237,10 @@ mod table {
   impl<T> Field<T> {
     fn sample_width(&mut self, t: &T) {
       self.width = cmp::max((self.get_field)(t).len(), self.width)
+    }
+
+    fn format_name(&self) -> String {
+      format!("{1:0$}", self.width, self.name)
     }
 
     fn format(&self, t: &T) -> String {
@@ -251,119 +263,111 @@ mod table {
     }
 
     pub fn print<U: IntoIterator<Item = T> + Clone>(&mut self, ts: U) {
+      self.print_and(ts, |_|())
+    }
+
+    pub fn print_and<U, F>(&mut self, ts: U, f: F)
+      where U: IntoIterator<Item = T> + Clone,
+            F: Fn(T)
+    {
+      let mut has_items = false;
       for t in ts.clone() {
+        has_items = true;
         for f in self.fields.iter_mut() {
           f.sample_width(&t)
         }
       }
-      let line: String = self.fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>().join(" | ");
-      println!("{}", line);
+      if has_items {
+        let line: String = self.fields.iter().map(|f| f.format_name()).collect::<Vec<_>>().join(" | ");
+        println!("{}", line);
+      }
 
       for t in ts.clone() {
         let line: String = self.fields.iter().map(|f| f.format(&t)).collect::<Vec<_>>().join(" | ");
-        println!("{}", line)
+        println!("{}", line);
+        f(t)
       }
     }
   }
 }
 
-
-fn print_item(item_hash: u32, db: &Connection) -> Result<()> {
-  let mut stmt = db.prepare_cached("select json from DestinyInventoryItemDefinition where id = ?1")?;
-  let mut rows =stmt.query(&[&(item_hash as i32)])?;
-  while let Some(row) = rows.next() {
-    let json: String = row?.get(0);
-    let item: dtos::InventoryItemDefinition = serde_json::from_str(&json)?;
-    println!("ID: {} Item: {:?}", item_hash, item);
-  };
-  Ok(())
+struct AuthGetter {
+  client: Client<HttpsConnector<HttpConnector>, Body>,
+  token: String,
+  app_auth: String,
+  json_dir: PathBuf,
 }
+
+use rand::{self,Rng};
+
+type Download = ( String, OsString, hyper::Chunk);
 
 impl AuthGetter {
   fn new( client: Client<HttpsConnector<HttpConnector>, Body>, token: String, app_auth: String,) -> AuthGetter {
-    AuthGetter{ client, token, app_auth }
+    let mut json_dir = env::temp_dir();
+    json_dir.push("d2tools");
+    json_dir.push( &rand::thread_rng().gen_ascii_chars().take(8).collect::<String>());
+    AuthGetter{ client, token, app_auth, json_dir }
   }
 
-  fn get(&self,
-         url: hyper::Uri)
-    -> Box<Future<Item = dtos::ResponseBody, Error = Error>> {
-      println!("{}", url);
-      let mut req = Request::new(hyper::Method::Get, url);
-      req.headers_mut().set(headers::XApiKey::key(self.app_auth.clone()));
-      req.headers_mut().set(header::Accept::json());
-      req.headers_mut().set(header::Authorization(header::Bearer { token: self.token.to_owned() }));
-      // println!("Request: {:?}", req);
-      let future = self.client.request(req)
-        .then(|result| {
-          match result {
-            Ok(res) => {
-              // println!("Response: {:?}", res);
-              match res.status() {
-                hyper::StatusCode::Ok => Ok(res),
-                hyper::StatusCode::Unauthorized => {
-                  let mut state = state::load().unwrap();
-                  state.access_token = String::new();
-                  state.refresh_token = String::new();
-                  state::save(state)?;
-                  bail!("unauthorized - old token scrubbed, rerun.")
-                }
-                _ => bail!("Other status..."),
+  fn get(&self, url: hyper::Uri) -> Box<Future<Item = Download, Error = Error>> {
+    let outurl = url.to_string();
+    let json_out = self.next_json_path();
+    let mut req = Request::new(hyper::Method::Get, url);
+    req.headers_mut().set(headers::XApiKey::key(self.app_auth.clone()));
+    req.headers_mut().set(header::Accept::json());
+    req.headers_mut().set(header::Authorization(header::Bearer { token: self.token.to_owned() }));
+    let future = self.client.request(req)
+      .then(|result| {
+        match result {
+          Ok(res) => {
+            // println!("Response: {:?}", res);
+            match res.status() {
+              hyper::StatusCode::Ok => Ok(res),
+              hyper::StatusCode::Unauthorized => {
+                let mut state = state::load().unwrap();
+                state.access_token = String::new();
+                state.refresh_token = String::new();
+                state::save(state)?;
+                bail!("unauthorized - old token scrubbed, rerun.")
               }
+              _ => bail!("Other status..."),
             }
-            _ => result.chain_err(|| "network error"),
           }
-        })
-      .and_then(|res| {
-        res.body().concat2().map_err(|e| Error::with_chain(e, "assembling body from stream"))
+          _ => result.chain_err(|| "network error"),
+        }
       })
-      .and_then(|body_chunk| {
-        println!("{}", String::from_utf8_lossy(&(*body_chunk)));
-        let v: dtos::ResponseBody =
-          serde_json::from_slice(&body_chunk).chain_err(|| format!("deserializing JSON: {:?}", String::from_utf8_lossy(&(*body_chunk))))?;
-        Ok(v)
-      });
-      Box::new(future)
-    }
+    .and_then(|res| {
+      res.body().concat2().map_err(|e| Error::with_chain(e, "assembling body from stream"))
+    })
+    .and_then(move |body_chunk| {
+      Ok((outurl, json_out, body_chunk))
+    });
+    Box::new(future)
+  }
 
-  fn get_debug(&self,
-         url: hyper::Uri)
-    -> Box<Future<Item = dtos::DebugResponseBody, Error = Error>> {
-      println!("{}", url);
-      let mut req = Request::new(hyper::Method::Get, url);
-      req.headers_mut().set(headers::XApiKey::key(self.app_auth.clone()));
-      req.headers_mut().set(header::Accept::json());
-      req.headers_mut().set(header::Authorization(header::Bearer { token: self.token.to_owned() }));
-      // println!("Request: {:?}", req);
-      let future = self.client.request(req)
-        .then(|result| {
-          match result {
-            Ok(res) => {
-              // println!("Response: {:?}", res);
-              match res.status() {
-                hyper::StatusCode::Ok => Ok(res),
-                hyper::StatusCode::Unauthorized => {
-                  let mut state = state::load().unwrap();
-                  state.access_token = String::new();
-                  state.refresh_token = String::new();
-                  state::save(state)?;
-                  bail!("unauthorized - old token scrubbed, rerun.")
-                }
-                _ => bail!("Other status..."),
-              }
-            }
-            _ => result.chain_err(|| "network error"),
-          }
-        })
-      .and_then(|res| {
-        res.body().concat2().map_err(|e| Error::with_chain(e, "assembling body from stream"))
-      })
-      .and_then(|body_chunk| {
-        println!("{}", String::from_utf8_lossy(&(*body_chunk)));
-        let v: dtos::DebugResponseBody =
-          serde_json::from_slice(&body_chunk).chain_err(|| format!("deserializing JSON: {}", String::from_utf8_lossy(&(*body_chunk))))?;
-        Ok(v)
-      });
-      Box::new(future)
-    }
+  fn next_json_path(&self) -> OsString {
+    let mut path = self.json_dir.clone();
+    let key: String = rand::thread_rng().gen_ascii_chars().take(8).collect();
+    path.push(format!("debug-{}.json", key));
+    path.into_os_string()
+  }
+}
 
+
+use std::ffi::OsString;
+use std::fmt::Debug;
+
+fn write_body<T: AsRef<Path> + Debug + Clone>(path: T, chunk: &hyper::Chunk) {
+  match maybe_write_body(path.clone(), chunk) {
+    Ok(_) => println!("Wrote debug data to {:?}", path),
+    Err(e) => println!("Error writing debug data: {:?}", e)
+  }
+}
+fn maybe_write_body<T: AsRef<Path> + Debug + Clone>(path: T, chunk: &hyper::Chunk) -> Result<()> {
+  let pc = path.clone();
+  let dir = pc.as_ref().parent().ok_or("JSON tempfile has no dir (?!)")?;
+  fs::create_dir_all(dir)?;
+  let mut file = fs::File::create(path)?;
+  Ok(write!(file, "{}", String::from_utf8_lossy(&(*chunk)))?)
 }
