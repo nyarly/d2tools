@@ -212,12 +212,13 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
     })
     .map(|populated_items| {
       table::printer()
-        .field( "Bucket Name", dtos::ItemResponse::bucket_name)
+        .field("", dtos::ItemResponse::holding_status)
+        .field("Bucket Name", dtos::ItemResponse::bucket_name)
         .field("Item Name", dtos::ItemResponse::item_name)
-        .field("Item Level", dtos::ItemResponse::level)
-        .field("Primary Value", dtos::ItemResponse::stat_value)
-        .field("Infusion Cat.", dtos::ItemResponse::infusion_category)
+        .field("Item Tier", dtos::ItemResponse::tier)
         .field("Infusion Power", dtos::ItemResponse::infusion_power)
+        .field("Effective Power", dtos::ItemResponse::stat_value)
+        .field("Infusion Cat.", dtos::ItemResponse::infusion_category)
         .print(populated_items);
     });
 

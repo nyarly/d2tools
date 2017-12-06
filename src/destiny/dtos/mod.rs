@@ -168,6 +168,21 @@ impl ItemResponse {
       .unwrap_or_default()
   }
 
+  pub fn holding_status(&self) -> String {
+    let mut status = String::new();
+    if self.instance.clone().and_then(|i| Some(i.data.is_equipped)).unwrap_or(false) {
+      status.push('*')
+    } else {
+      status.push(' ')
+    }
+    match self.item.clone().and_then(|i| Some(i.data.state)).unwrap_or(enums::ItemState::None) {
+      enums::ItemState::Locked => status.push('L'),
+      enums::ItemState::Tracked => status.push('T'),
+      enums::ItemState::None => status.push(' '),
+    }
+    status
+  }
+
   pub fn bucket_name(&self) -> String {
     self.bucket.clone().map_or("".to_owned(),
                                |b| b.display_properties.name.unwrap_or_default())
@@ -188,6 +203,11 @@ impl ItemResponse {
 
   pub fn level(&self) -> String {
     self.instance.clone().map_or("".to_owned(), |inst| format!("{}", inst.data.item_level))
+  }
+
+  pub fn tier(&self) -> String {
+    self.item_def.clone().map_or("".to_owned(),
+                                 |def| format!("{:?}", def.inventory.tier_type))
   }
 
   pub fn stat_value(&self) -> String {
@@ -294,6 +314,7 @@ pub struct Item {
   pub item_instance_id: Option<String>,
   pub quantity: i32,
   pub bucket_hash: u32,
+  pub state: enums::ItemState,
 }
 
 #[derive(Deserialize, Debug, Clone)]

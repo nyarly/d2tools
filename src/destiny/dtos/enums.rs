@@ -96,6 +96,12 @@ enum_number!(BungieMemberType {
   All = -1,
 });
 
+enum_number!(ItemState {
+  None = 0,
+  Locked = 1,
+  Tracked = 2,
+});
+
 enum_number!(ComponentType {
   None = 0,
   Profiles = 100,
