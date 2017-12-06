@@ -1,4 +1,3 @@
-use errors::*;
 use state;
 
 use native_tls::{TlsAcceptor, Pkcs12};
@@ -13,6 +12,8 @@ use oauth2::Config;
 use rand::{self, Rng};
 use base64;
 use url;
+
+use errors::*;
 
 pub fn get() -> Result<()> {
   let config = oauth_config()?;
@@ -104,12 +105,12 @@ fn get_oauth_stuff(req: Request) -> Result<()> {
 }
 
 fn value_from_query(uri: &hyper::Uri, name: &str) -> Result<String> {
-  let query_string = uri.query().ok_or("No query part")?;
+  let query_string = uri.query().ok_or(format_err!("No query part"))?;
   let pair = url::form_urlencoded::parse(query_string.as_bytes()).find(|pair| {
       let &(ref key, _) = pair;
       key == name
     })
-    .ok_or("key not found")?;
+    .ok_or(format_err!("key not found"))?;
   let (_, value) = pair;
   Ok(value.into_owned())
 }

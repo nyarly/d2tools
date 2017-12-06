@@ -1,6 +1,6 @@
-use errors::*;
 use std::collections::HashMap;
 use std::cmp;
+use errors::*;
 
 pub mod enums;
 
@@ -189,11 +189,11 @@ impl ItemResponse {
   }
 
   pub fn item_hash(&self) -> Result<i32> {
-    self.item.clone().ok_or("No item!".into()).map(|i| i.data.item_hash as i32)
+    self.item.clone().ok_or(format_err!("No item!")).map(|i| i.data.item_hash as i32)
   }
 
   pub fn bucket_hash(&self) -> Result<i32> {
-    self.item.clone().ok_or("No item!".into()).map(|i| i.data.bucket_hash as i32)
+    self.item.clone().ok_or(format_err!("No item!")).map(|i| i.data.bucket_hash as i32)
   }
 
   pub fn item_name(&self) -> String {

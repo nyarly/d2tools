@@ -2,7 +2,6 @@ use std::env;
 use std::io::{self,Read,Write};
 use std::fs;
 use std::path::{Path, PathBuf};
-use errors::*;
 use futures::Stream;
 use futures::future::{self,Future};
 use hyper::{self, header, Body, Chunk};
@@ -11,6 +10,8 @@ use hyper_tls::HttpsConnector;
 use tokio_core::reactor::Core;
 use zip::read::ZipArchive;
 use rusqlite::Connection;
+
+use errors::*;
 
 mod urls;
 mod headers;
@@ -27,7 +28,7 @@ fn build_client(core: &Core) -> Result<Client<HttpsConnector<HttpConnector>, Bod
 }
 
 fn cache_path(filename: &str) -> Result<PathBuf> {
-  let mut path = env::home_dir().ok_or("Can't determine $HOME!")?;
+  let mut path = env::home_dir().ok_or(format_err!("Can't determine $HOME!"))?;
   path.push(".local");
   path.push("cache");
   path.push("d2tools");
@@ -36,7 +37,7 @@ fn cache_path(filename: &str) -> Result<PathBuf> {
 }
 
 fn database_name_from_path(path: &str) -> Result<String> {
-  path.split('/').last().ok_or("Couldn't split URL path".into()).map(|s| s.to_owned())
+  path.split('/').last().ok_or(format_err!("Couldn't split URL path")).map(|s| s.to_owned())
 }
 
 fn store_received_databases(chunk: Chunk) -> Result<()> {
@@ -52,7 +53,6 @@ fn store_received_databases(chunk: Chunk) -> Result<()> {
   Ok(())
 }
 
-use error_chain::ChainedError;
 use self::dtos::Deser;
 
 fn unshare_result<T,U: ::std::ops::Deref,E>(res: ::std::result::Result<U, E>) -> Result<U::Target>
@@ -77,7 +77,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
   let database_path = authd.get(urls::get_manifest()?)
     .and_then(|dl| dtos::ManifestResponseBody::deser(dl))
     .and_then(|mrb| mrb.response.mobile_world_content_paths.get("en")
-            .ok_or("No 'en' content!".into())
+            .ok_or(format_err!("No 'en' content!"))
             .map(|rurl| rurl.clone())
     ).shared();
 
@@ -141,7 +141,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
 
   let equipment_ids = profile.clone()
     .then(|res| unshare_result::<String,_,_>(res))
-    .and_then(|profile| profile.character_equipment.ok_or("No equipment!".into()))
+    .and_then(|profile| profile.character_equipment.ok_or(format_err!("No equipment!")))
     .and_then(|inv_comp| {
       Ok(inv_comp.data.values().flat_map(|inv| {
         inv.items.iter().filter_map(|it| {
@@ -152,7 +152,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
 
   let inventory_ids = profile.clone()
     .then(|res| unshare_result::<String,_,_>(res))
-    .and_then(|profile| profile.character_inventories.ok_or("No inventory!".into()))
+    .and_then(|profile| profile.character_inventories.ok_or(format_err!("No inventory!")))
     .and_then(|inv_comp| {
       Ok(inv_comp.data.values().flat_map(|inv| {
         inv.items.iter().filter_map(|it| {
@@ -164,7 +164,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
 
   let vault_ids = profile.clone()
     .then(|res| unshare_result::<String,_,_>(res))
-    .and_then(|profile| profile.profile_inventory.ok_or("No vault!".into()))
+    .and_then(|profile| profile.profile_inventory.ok_or(format_err!("No vault!")))
     .and_then(|vault| {
       Ok(vault.data.items.iter().filter_map(|it| {
         it.item_instance_id.clone().map(|id| id)
@@ -367,7 +367,7 @@ fn write_body<T: AsRef<Path> + Debug + Clone>(path: T, chunk: &hyper::Chunk) {
 }
 fn maybe_write_body<T: AsRef<Path> + Debug + Clone>(path: T, chunk: &hyper::Chunk) -> Result<()> {
   let pc = path.clone();
-  let dir = pc.as_ref().parent().ok_or("JSON tempfile has no dir (?!)")?;
+  let dir = pc.as_ref().parent().ok_or(format_err!("JSON tempfile has no dir (?!)"))?;
   fs::create_dir_all(dir)?;
   let mut file = fs::File::create(path)?;
   Ok(write!(file, "{}", String::from_utf8_lossy(&(*chunk)))?)

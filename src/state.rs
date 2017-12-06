@@ -1,8 +1,9 @@
 use std::env;
 use std::fs::File;
 use toml;
-use errors::*;
 use std::io::{Read, Write};
+
+use errors::*;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct State {
@@ -17,10 +18,10 @@ pub struct State {
 }
 
 fn state_path() -> Result<String> {
-  let mut path = env::home_dir().ok_or("Can't determine $HOME!")?;
+  let mut path = env::home_dir().ok_or(format_err!("Can't determine $HOME!"))?;
   path.push(".config");
   path.push("d2tools.toml");
-  Ok(path.to_str().ok_or("Couldn't build state path!")?.to_owned())
+  Ok(path.to_str().ok_or(format_err!("Couldn't build state path!"))?.to_owned())
 }
 
 pub fn load() -> Result<State> {

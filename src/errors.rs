@@ -1,18 +1,2 @@
-error_chain!{
-  foreign_links {
-    TLS(::native_tls::Error);
-    AddrParseError(::std::net::AddrParseError);
-    EnvVarError(::std::env::VarError);
-    IOError(::std::io::Error);
-    DeError(::toml::de::Error);
-    SerError(::toml::ser::Error);
-    Oauth2Error(::oauth2::TokenError);
-    UrlParseError(::url::ParseError);
-    IntParseError(::std::num::ParseIntError);
-    HyperParseError(::hyper::error::UriError);
-    HyperError(::hyper::Error);
-    SerdeJSON(::serde_json::Error);
-    ZipErr(::zip::result::ZipError);
-    Rusqlite(::rusqlite::Error);
-  }
-}
+pub use failure::Error;
+pub type Result<T> = ::std::result::Result<T, Error>;

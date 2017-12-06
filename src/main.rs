@@ -1,8 +1,5 @@
-// for error-chain...
-#![recursion_limit="256"]
-
 #[macro_use]
-extern crate error_chain;
+extern crate failure;
 
 #[macro_use]
 extern crate serde_derive;
@@ -26,14 +23,24 @@ extern crate serde_json;
 extern crate zip;
 extern crate rusqlite;
 
-mod errors;
 mod state;
 mod oauth;
 mod destiny;
+mod errors;
 
 use errors::*;
 
-quick_main!(main_loop);
+fn main() {
+  use ::std::io::Write;
+
+  ::std::process::exit(match main_loop() {
+    Ok(ret) => 0,
+    Err(ref e) => {
+      write!(&mut ::std::io::stderr(), "{}", e).expect("Error writing to stderr");
+      1
+    }
+  });
+}
 
 fn main_loop() -> Result<()> {
   let state = state::load()?;

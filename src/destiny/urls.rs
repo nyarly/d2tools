@@ -1,8 +1,9 @@
 use url;
 use hyper;
 use uritemplate::UriTemplate;
-use errors::*;
 use super::dtos::enums;
+
+use errors::*;
 
 fn root() -> Result<url::Url> {
   Ok("https://www.bungie.net/Platform/".parse()?)
