@@ -11,6 +11,7 @@ pub trait Deser
 }
 
 use destiny::{Download, write_body};
+use failure::ResultExt;
 
 macro_rules! body_wrapper{
   ($inner:ident, $outer:ident) => {
@@ -28,7 +29,7 @@ macro_rules! body_wrapper{
       let (outurl, json_out, body_chunk) = value;
       println!("{}", outurl);
       write_body(&json_out, &body_chunk);
-      Ok(serde_json::from_slice(&body_chunk).chain_err(|| format!("deserializing JSON: recorded at {:?}", json_out))?)
+      Ok(serde_json::from_slice(&body_chunk).with_context(|_| format!("deserializing JSON: recorded at {:?}", json_out))?)
     }
   }
   }
@@ -90,10 +91,10 @@ fn fetch_plug_def(hash: i32, db: &Connection) -> Result<InventoryItemDefinition>
     db.prepare_cached("select json from DestinyInventoryItemDefinition where id = ?1")?;
   stmt.query_row(&[&hash], |row| {
       let json: String = row.get(0);
-      serde_json::from_str(&json).chain_err(|| format!("deserializing JSON: {}", hash))
+      serde_json::from_str(&json).with_context(|_| format!("deserializing JSON: {}", hash))
     })
-    .chain_err(|| format!("{}", hash))
-    .and_then(|res| res)
+    .map_err(|e| Error::from(e))
+    .and_then(|res| Ok(res?))
 }
 
 impl ItemResponse {
@@ -102,7 +103,7 @@ impl ItemResponse {
       .and(self.fetch_bucket_def(db))
       .and(self.fetch_plug_defs(db)) {
       Ok(_) => (),
-      Err(e) => println!("Problem getting defs for {:?}: {:?}", self, e),
+      Err(e) => println!("Problem getting defs for:\n {:?}: \n{:?}", self, e),
     }
   }
 
@@ -113,7 +114,8 @@ impl ItemResponse {
     match rows.next() {
       Some(row) => {
         let json: String = row?.get(0);
-        let item: InventoryItemDefinition = serde_json::from_str(&json)?;
+        let item: InventoryItemDefinition =
+          serde_json::from_str(&json).with_context(|_| format!("deserializing JSON: {}", json))?;
         self.item_def = Some(item);
         Ok(())
       }
@@ -129,7 +131,7 @@ impl ItemResponse {
       Some(row) => {
         let json: String = row?.get(0);
         let bucket: InventoryBucketDefinition =
-          serde_json::from_str(&json).chain_err(|| format!("{}", json))?;
+          serde_json::from_str(&json).with_context(|_| format!("deserializing JSON: {}", json))?;
         self.bucket = Some(bucket);
         Ok(())
       }
@@ -220,8 +222,12 @@ impl ItemResponse {
   }
 
   pub fn infusion_category(&self) -> String {
-    self.item_def.clone().map_or("".to_owned(),
-                                 |i| i.quality.map_or("".to_owned(), |q| q.infusion_category_name))
+    format!("{}", self.infusion_category_hash())
+  }
+
+  fn infusion_category_hash(&self) -> u32 {
+    self.item_def.clone().map_or(0,
+                                 |i| i.quality.map_or(0, |q| q.infusion_category_hash.unwrap_or(0)))
   }
 
   pub fn infusion_power(&self) -> String {
@@ -402,7 +408,8 @@ pub struct DisplayProperties {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct QualityBlockDefinition {
-  pub infusion_category_name: String,
+  pub infusion_category_name: Option<String>,
+  pub infusion_category_hash: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

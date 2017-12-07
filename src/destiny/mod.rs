@@ -54,6 +54,7 @@ fn store_received_databases(chunk: Chunk) -> Result<()> {
 }
 
 use self::dtos::Deser;
+use failure::ResultExt;
 
 fn unshare_result<T,U: ::std::ops::Deref,E>(res: ::std::result::Result<U, E>) -> Result<U::Target>
 where U::Target: Sized + Clone,
@@ -61,7 +62,7 @@ where U::Target: Sized + Clone,
 {
   match res {
     Ok(it) => Ok((*it).clone()),
-    Err(e) => bail!((*e).display_chain().to_string())
+    Err(e) => bail!("{}", *e)
   }
 }
 
@@ -77,9 +78,10 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
   let database_path = authd.get(urls::get_manifest()?)
     .and_then(|dl| dtos::ManifestResponseBody::deser(dl))
     .and_then(|mrb| mrb.response.mobile_world_content_paths.get("en")
-            .ok_or(format_err!("No 'en' content!"))
-            .map(|rurl| rurl.clone())
-    ).shared();
+              .ok_or(format_err!("No 'en' content!"))
+              .map(|rurl| rurl.clone())
+    )
+    .shared();
 
   let database_stored = database_path.clone()
     .then(|res| unshare_result::<String,_,_>(res))
@@ -91,15 +93,10 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
         if !dbpath.is_file() {
           println!("DB not present - downloading...");
           Some(
-          future::lazy(move || urlstr.parse()
-                       .map_err(|err| Error::with_chain(err, "parsing content url")))
-            .and_then(|url| {
-              content_client.get(url)
-                .map_err(|err| Error::with_chain(err, "getting content"))
-            })
-          .and_then(|res| res.body().concat2()
-                    .map_err(|e| Error::with_chain(e, "assembling body from stream")))
-          .and_then(|body_chunk| store_received_databases(body_chunk).chain_err(|| "storing db"))
+            future::lazy(move || Ok(urlstr.parse()?))
+              .and_then(|url| content_client.get(url).map_err(|e| Error::from(e)) )
+              .and_then(|res| res.body().concat2().map_err(|e| Error::from(e)))
+              .and_then(|body_chunk| Ok(store_received_databases(body_chunk).with_context(|_| "storing db")?))
           )
         } else {
           None
@@ -111,8 +108,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
   let database_name = database_path
     .then(|res| unshare_result::<String,_,_>(res))
     .and_then(|urlpath|
-      cache_path(&database_name_from_path(&urlpath)?)
-              .map_err(|err| Error::with_chain(err, "getting content"))
+              Ok( cache_path(&database_name_from_path(&urlpath)?).context("getting content")?)
       ).shared();
 
   let card = authd.get(urls::get_membership_data_for_current_user()?)
@@ -190,8 +186,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
         let database = database_name.clone()
           .then(|res| unshare_result::<String,_,_>(res))
           .join(database_stored.clone().then(|res| unshare_result::<String,_,_>(res)))
-          .and_then(|(name, _)| Connection::open(name)
-                    .map_err(|err| Error::with_chain(err, "opening DB connection")));
+          .and_then(|(name, _)| Ok(Connection::open(name).context("opening DB connection")?));
 
         authd.get(url.clone())
           .and_then(|dl| dtos::ItemResponseBody::deser(dl))
@@ -300,6 +295,7 @@ struct AuthGetter {
 }
 
 use rand::{self,Rng};
+use failure;
 
 type Download = ( String, OsString, hyper::Chunk);
 
@@ -311,13 +307,14 @@ impl AuthGetter {
     AuthGetter{ client, token, app_auth, json_dir }
   }
 
-  fn get(&self, url: hyper::Uri) -> Box<Future<Item = Download, Error = Error>> {
+  fn get(&self, url: hyper::Uri) -> Box<Future<Item = Download, Error = failure::Error>> {
     let outurl = url.to_string();
     let json_out = self.next_json_path();
     let mut req = Request::new(hyper::Method::Get, url);
     req.headers_mut().set(headers::XApiKey::key(self.app_auth.clone()));
     req.headers_mut().set(header::Accept::json());
     req.headers_mut().set(header::Authorization(header::Bearer { token: self.token.to_owned() }));
+
     let future = self.client.request(req)
       .then(|result| {
         match result {
@@ -335,16 +332,16 @@ impl AuthGetter {
               _ => bail!("Other status..."),
             }
           }
-          _ => result.chain_err(|| "network error"),
+          _ => Ok(result.context("network error")?),
         }
       })
     .and_then(|res| {
-      res.body().concat2().map_err(|e| Error::with_chain(e, "assembling body from stream"))
+      res.body().concat2().map_err(|e| Error::from(e))
     })
     .and_then(move |body_chunk| {
       Ok((outurl, json_out, body_chunk))
     });
-    Box::new(future)
+    Box::new(future) as Box<Future<Item=Download, Error=failure::Error>>
   }
 
   fn next_json_path(&self) -> OsString {
