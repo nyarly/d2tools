@@ -22,6 +22,7 @@ extern crate serde;
 extern crate serde_json;
 extern crate zip;
 extern crate rusqlite;
+extern crate tokio_retry;
 
 mod state;
 mod oauth;
@@ -34,7 +35,7 @@ fn main() {
   use ::std::io::Write;
 
   ::std::process::exit(match main_loop() {
-    Ok(ret) => 0,
+    Ok(_) => 0,
     Err(ref e) => {
       write!(&mut ::std::io::stderr(), "{}", e).expect("Error writing to stderr");
       1

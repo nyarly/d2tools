@@ -203,13 +203,18 @@ impl ItemResponse {
                                  |i| i.display_properties.name.unwrap_or_default())
   }
 
-  pub fn level(&self) -> String {
-    self.instance.clone().map_or("".to_owned(), |inst| format!("{}", inst.data.item_level))
-  }
+  // pub fn level(&self) -> String {
+  // self.instance.clone().map_or("".to_owned(), |inst| format!("{}", inst.data.item_level))
+  // }
+  //
 
   pub fn tier(&self) -> String {
     self.item_def.clone().map_or("".to_owned(),
                                  |def| format!("{:?}", def.inventory.tier_type))
+  }
+
+  pub fn item_kind(&self) -> String {
+    self.item_def.clone().map_or("".to_owned(), |def| def.item_type_display_name)
   }
 
   pub fn stat_value(&self) -> String {
@@ -277,16 +282,17 @@ pub struct ItemSocketState {
 }
 
 impl ItemSocketState {
-  pub fn plug_name(&self) -> String {
-    self.plug_def.clone().map_or("".to_owned(),
-                                 |plug| plug.display_properties.name.unwrap_or_default())
-  }
-  pub fn plug_type(&self) -> String {
-    self.plug_def.clone().map_or("".to_owned(), |plug| plug.item_type_display_name)
-  }
-  pub fn plug_tier(&self) -> String {
-    format!("{:?}", self.tier())
-  }
+  // pub fn plug_name(&self) -> String {
+  // self.plug_def.clone().map_or("".to_owned(),
+  // |plug| plug.display_properties.name.unwrap_or_default())
+  // }
+  // pub fn plug_type(&self) -> String {
+  // self.plug_def.clone().map_or("".to_owned(), |plug| plug.item_type_display_name)
+  // }
+  // pub fn plug_tier(&self) -> String {
+  // format!("{:?}", self.tier())
+  // }
+  //
 
   fn tier(&self) -> enums::TierType {
     self.plug_def.clone().map_or(enums::TierType::Unknown, |plug| plug.inventory.tier_type)
@@ -297,9 +303,11 @@ impl ItemSocketState {
       plug.plug.map_or("".to_owned(), |plug| plug.plug_category_identifier)
     })
   }
-  pub fn is_enabled(&self) -> String {
-    format!("{}", self.is_enabled)
-  }
+
+  // pub fn is_enabled(&self) -> String {
+  // format!("{}", self.is_enabled)
+  // }
+  //
 
   fn bumps_power(&self) -> bool {
     let cat = self.category_id();

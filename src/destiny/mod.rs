@@ -2,7 +2,7 @@ use std::env;
 use std::io::{self,Read,Write};
 use std::fs;
 use std::path::{Path, PathBuf};
-use futures::Stream;
+use futures::{Stream};
 use futures::future::{self,Future};
 use hyper::{self, header, Body, Chunk};
 use hyper::client::{Client, Request, HttpConnector};
@@ -66,7 +66,6 @@ where U::Target: Sized + Clone,
   }
 }
 
-
 pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
   let mut core = Core::new()?;
 
@@ -129,6 +128,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
                                        enums::ComponentType::Characters,
                                        enums::ComponentType::CharacterInventories,
                                        enums::ComponentType::CharacterEquipment,
+                                       enums::ComponentType::Kiosks,
     ]))
     .and_then(|url|  authd.get(url))
     .and_then(|dl| dtos::ProfileResponseBody::deser(dl))
@@ -211,6 +211,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
         .field("Bucket Name", dtos::ItemResponse::bucket_name)
         .field("Item Name", dtos::ItemResponse::item_name)
         .field("Item Tier", dtos::ItemResponse::tier)
+        .field("Item Kind", dtos::ItemResponse::item_kind)
         .field("Infusion Power", dtos::ItemResponse::infusion_power)
         .field("Effective Power", dtos::ItemResponse::stat_value)
         .field("Infusion Cat.", dtos::ItemResponse::infusion_category)
@@ -294,8 +295,29 @@ struct AuthGetter {
   json_dir: PathBuf,
 }
 
+struct RequestAction {
+  url: hyper::Uri,
+  app_auth: String,
+  token: String,
+  client: Client<HttpsConnector<HttpConnector>, Body>,
+}
+
 use rand::{self,Rng};
-use failure;
+use tokio_retry::{strategy,Retry,Action};
+
+impl Action for RequestAction {
+  type Future = Box<Future<Item = hyper::Response, Error = hyper::Error>>;
+  type Item = hyper::Response;
+  type Error = hyper::Error;
+
+  fn run(&mut self) -> Self::Future {
+    let mut req = Request::new(hyper::Method::Get, self.url.clone());
+    req.headers_mut().set(headers::XApiKey::key(self.app_auth.clone()));
+    req.headers_mut().set(header::Accept::json());
+    req.headers_mut().set(header::Authorization(header::Bearer { token: self.token.to_owned() }));
+    Box::new(self.client.request(req))
+  }
+}
 
 type Download = ( String, OsString, hyper::Chunk);
 
@@ -307,41 +329,43 @@ impl AuthGetter {
     AuthGetter{ client, token, app_auth, json_dir }
   }
 
-  fn get(&self, url: hyper::Uri) -> Box<Future<Item = Download, Error = failure::Error>> {
+  // boxed until https://github.com/rust-lang/rust/issues/34511...
+  fn get(&self, url: hyper::Uri) -> Box<Future<Item=Download, Error=Error>> {
+    let backoff = strategy::ExponentialBackoff::from_millis(10)
+      .map(strategy::jitter)
+      .take(5);
+
     let outurl = url.to_string();
     let json_out = self.next_json_path();
-    let mut req = Request::new(hyper::Method::Get, url);
-    req.headers_mut().set(headers::XApiKey::key(self.app_auth.clone()));
-    req.headers_mut().set(header::Accept::json());
-    req.headers_mut().set(header::Authorization(header::Bearer { token: self.token.to_owned() }));
 
-    let future = self.client.request(req)
-      .then(|result| {
-        match result {
-          Ok(res) => {
-            // println!("Response: {:?}", res);
-            match res.status() {
-              hyper::StatusCode::Ok => Ok(res),
-              hyper::StatusCode::Unauthorized => {
-                let mut state = state::load().unwrap();
-                state.access_token = String::new();
-                state.refresh_token = String::new();
-                state::save(state)?;
-                bail!("unauthorized - old token scrubbed, rerun.")
-              }
-              _ => bail!("Other status..."),
-            }
-          }
-          _ => Ok(result.context("network error")?),
-        }
-      })
-    .and_then(|res| {
-      res.body().concat2().map_err(|e| Error::from(e))
-    })
-    .and_then(move |body_chunk| {
-      Ok((outurl, json_out, body_chunk))
+    let retry = Retry::spawn( self.client.handle().clone(), backoff, RequestAction{
+      url: url,
+      app_auth: self.app_auth.clone(),
+      token: self.token.clone(),
+      client: self.client.clone(),
     });
-    Box::new(future) as Box<Future<Item=Download, Error=failure::Error>>
+
+    Box::new( retry
+              .map_err(|e| Error::from(Error::from(e).context("network error")))
+              .and_then(|result| {
+                match result.status() {
+                  hyper::StatusCode::Ok => Ok(result),
+                  hyper::StatusCode::Unauthorized => {
+                    let mut state = state::load().unwrap();
+                    state.access_token = String::new();
+                    state.refresh_token = String::new();
+                    state::save(state)?;
+                    bail!("unauthorized - old token scrubbed, rerun.")
+                  }
+                  _ => bail!("Other status..."),
+                }
+              })
+              .and_then(|res| {
+                res.body().concat2().map_err(|e| Error::from(e))
+              })
+              .and_then(move |body_chunk| {
+                Ok((outurl, json_out, body_chunk))
+              }))
   }
 
   fn next_json_path(&self) -> OsString {
