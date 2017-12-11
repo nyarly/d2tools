@@ -28,6 +28,7 @@ mod state;
 mod oauth;
 mod destiny;
 mod errors;
+mod table;
 
 use errors::*;
 
@@ -37,7 +38,7 @@ fn main() {
   ::std::process::exit(match main_loop() {
     Ok(_) => 0,
     Err(ref e) => {
-      write!(&mut ::std::io::stderr(), "{}", e).expect("Error writing to stderr");
+      write!(&mut ::std::io::stderr(), "{}\n", e).expect("Error writing to stderr");
       1
     }
   });

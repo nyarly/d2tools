@@ -13,6 +13,8 @@ use rusqlite::Connection;
 
 use errors::*;
 
+use table;
+
 mod urls;
 mod headers;
 mod dtos;
@@ -206,7 +208,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
       items
     })
     .map(|populated_items| {
-      table::printer()
+      println!("{}", table::printer()
         .field("", dtos::ItemResponse::holding_status)
         .field("Bucket Name", dtos::ItemResponse::bucket_name)
         .field("Item Name", dtos::ItemResponse::item_name)
@@ -215,77 +217,11 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
         .field("Infusion Power", dtos::ItemResponse::infusion_power)
         .field("Effective Power", dtos::ItemResponse::stat_value)
         .field("Infusion Cat.", dtos::ItemResponse::infusion_category)
-        .print(populated_items);
+        .with_items(populated_items));
     });
 
   core.run(work)?;
   Ok(())
-}
-
-mod table {
-  use std::cmp;
-
-  struct Field<T> {
-    get_field: fn(&T) -> String,
-    width: usize,
-    name: String,
-  }
-
-  impl<T> Field<T> {
-    fn sample_width(&mut self, t: &T) {
-      self.width = cmp::max((self.get_field)(t).len(), self.width)
-    }
-
-    fn format_name(&self) -> String {
-      format!("{1:0$}", self.width, self.name)
-    }
-
-    fn format(&self, t: &T) -> String {
-      format!("{1:0$}", self.width, (self.get_field)(t))
-    }
-  }
-
-  pub struct Printer<T> {
-    fields: Vec<Field<T>>,
-  }
-
-  pub fn printer<T>() -> Printer<T> {
-    Printer{ fields: Vec::new() }
-  }
-
-  impl<T> Printer<T> {
-    pub fn field(mut self, name: &str, get_field: fn(&T) -> String) -> Printer<T> {
-      self.fields.push( Field{ name: name.to_owned(), get_field, width: name.len() });
-      self
-    }
-
-    pub fn print<U: IntoIterator<Item = T> + Clone>(&mut self, ts: U) {
-      self.print_and(ts, |_|())
-    }
-
-    pub fn print_and<U, F>(&mut self, ts: U, f: F)
-      where U: IntoIterator<Item = T> + Clone,
-            F: Fn(T)
-    {
-      let mut has_items = false;
-      for t in ts.clone() {
-        has_items = true;
-        for f in self.fields.iter_mut() {
-          f.sample_width(&t)
-        }
-      }
-      if has_items {
-        let line: String = self.fields.iter().map(|f| f.format_name()).collect::<Vec<_>>().join(" | ");
-        println!("{}", line);
-      }
-
-      for t in ts.clone() {
-        let line: String = self.fields.iter().map(|f| f.format(&t)).collect::<Vec<_>>().join(" | ");
-        println!("{}", line);
-        f(t)
-      }
-    }
-  }
 }
 
 struct AuthGetter {
