@@ -23,12 +23,15 @@ extern crate serde_json;
 extern crate zip;
 extern crate rusqlite;
 extern crate tokio_retry;
+extern crate gotham;
+extern crate mime;
 
 mod state;
 mod oauth;
 mod destiny;
 mod errors;
 mod table;
+mod server;
 
 use errors::*;
 
@@ -51,5 +54,5 @@ fn main_loop() -> Result<()> {
     oauth::get()?
   }
 
-  destiny::api_exchange(state.access_token, state.api_key)
+  server::start_http()
 }

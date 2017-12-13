@@ -68,7 +68,7 @@ where U::Target: Sized + Clone,
   }
 }
 
-pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
+pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos::ItemResponse>> {
   let mut core = Core::new()?;
 
   let client = build_client(&core)?;
@@ -208,7 +208,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
       items
     })
     .map(|populated_items| {
-      println!("{}", table::printer()
+      table::printer()
         .field("", dtos::ItemResponse::holding_status)
         .field("Bucket Name", dtos::ItemResponse::bucket_name)
         .field("Item Name", dtos::ItemResponse::item_name)
@@ -217,11 +217,10 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<()> {
         .field("Infusion Power", dtos::ItemResponse::infusion_power)
         .field("Effective Power", dtos::ItemResponse::stat_value)
         .field("Infusion Cat.", dtos::ItemResponse::infusion_category)
-        .with_items(populated_items));
-    });
+        .with_items(populated_items)
+      });
 
-  core.run(work)?;
-  Ok(())
+  Ok(core.run(work)?)
 }
 
 struct AuthGetter {
