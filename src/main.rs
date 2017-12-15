@@ -25,6 +25,7 @@ extern crate rusqlite;
 extern crate tokio_retry;
 extern crate gotham;
 extern crate mime;
+extern crate futures_cpupool;
 
 mod state;
 mod oauth;
@@ -54,5 +55,5 @@ fn main_loop() -> Result<()> {
     oauth::get()?
   }
 
-  server::start_http()
+  server::start_https()
 }
