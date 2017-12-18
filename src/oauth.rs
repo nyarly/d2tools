@@ -8,21 +8,25 @@ use tokio_service::Service;
 use hyper::{self, Request, Response, StatusCode};
 use futures::future::{ok, Future};
 use std::io;
-use oauth2::Config;
+use oauth2::{Config, Token};
 use rand::{self, Rng};
 use base64;
 use url;
 
 use errors::*;
+use state::AppConfig;
 
 pub fn get() -> Result<()> {
-  let config = oauth_config()?;
+  let cfg = state::load()?;
 
   println!("Open this URL in your browser:\n{}\n",
-           config.authorize_url().to_string());
-
-  // These variables will store the code & state retrieved during the authorization process.
+           authorize_url(cfg.oauth_url()?.as_str(), &cfg));
   oauth_redirection_server()
+}
+
+pub fn authorize_url(url: &str, cfg: &AppConfig) -> String {
+  let config = oauth_config(url, cfg);
+  config.authorize_url().to_string()
 }
 
 fn oauth_redirection_server() -> Result<()> {
@@ -69,32 +73,27 @@ impl Service for OauthReceiver {
   }
 }
 
-fn oauth_config() -> Result<Config> {
-  let cfg = state::load()?;
+fn oauth_config(url: &str, cfg: &AppConfig) -> Config {
   let auth_url = "https://www.bungie.net/en/oauth/authorize";
   let token_url = "https://www.bungie.net/platform/app/oauth/token/";
 
-  let mut config = Config::new(cfg.client_id, cfg.client_secret, auth_url, token_url);
-  config = config.set_redirect_url("https://127.0.0.1:8080/");
+  let mut config = Config::new(cfg.client_id.clone(),
+                               cfg.client_secret.clone(),
+                               auth_url,
+                               token_url);
+
+  config = config.set_redirect_url(url);
   // Generate the authorization URL to which we'll redirect the user.
-  config = config.set_state(base64::encode(&rand::thread_rng()
+  config.set_state(base64::encode(&rand::thread_rng()
     .gen_iter::<u8>()
     .take(32)
-    .collect::<Vec<_>>()));
-  Ok(config)
+    .collect::<Vec<_>>()))
 }
 
 fn get_oauth_stuff(req: Request) -> Result<()> {
-  let code = value_from_query(req.uri(), "code")?;
-  let state = value_from_query(req.uri(), "state")?;
+  let cfg = state::load()?;
 
-  println!("Oauth code:\n{}\n", code);
-  println!("Echoed state:\n{}\n", state);
-
-  let config = oauth_config()?;
-
-  // Exchange the code with a token.
-  let token = config.exchange_code(code)?;
+  let token = extract_token(&cfg, req)?;
 
   let mut state = state::load()?;
   state.access_token = token.access_token;
@@ -102,6 +101,18 @@ fn get_oauth_stuff(req: Request) -> Result<()> {
   state::save(state)?;
   println!("Token recorded! Re-run d2tools.");
   ::std::process::exit(0)
+}
+
+pub fn extract_token(cfg: &AppConfig, req: Request) -> Result<Token> {
+  let code = value_from_query(req.uri(), "code")?;
+  let state = value_from_query(req.uri(), "state")?;
+
+  println!("Oauth code:\n{}\n", code);
+  println!("Echoed state:\n{}\n", state);
+
+  let config = oauth_config(cfg.oauth_url()?.as_str(), &cfg);
+
+  Ok(config.exchange_code(code)?)
 }
 
 fn value_from_query(uri: &hyper::Uri, name: &str) -> Result<String> {

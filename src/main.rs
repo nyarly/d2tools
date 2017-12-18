@@ -24,6 +24,8 @@ extern crate zip;
 extern crate rusqlite;
 extern crate tokio_retry;
 extern crate gotham;
+#[macro_use]
+extern crate gotham_derive;
 extern crate mime;
 extern crate futures_cpupool;
 
@@ -39,21 +41,11 @@ use errors::*;
 fn main() {
   use ::std::io::Write;
 
-  ::std::process::exit(match main_loop() {
+  ::std::process::exit(match server::start_https() {
     Ok(_) => 0,
     Err(ref e) => {
       write!(&mut ::std::io::stderr(), "{}\n", e).expect("Error writing to stderr");
       1
     }
   });
-}
-
-fn main_loop() -> Result<()> {
-  let state = state::load()?;
-
-  if state.access_token == "" {
-    oauth::get()?
-  }
-
-  server::start_https()
 }
