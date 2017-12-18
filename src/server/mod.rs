@@ -12,9 +12,12 @@ use gotham::handler::NewHandlerService;
 
 use gotham::router::Router;
 use gotham;
+use fern;
+use log::LogLevelFilter;
+use chrono::prelude::*;
 
 #[derive(Default,Serialize,Deserialize,StateData)]
-struct Session {
+struct D2Session {
   #[serde(default)]
   pub access_token: String,
   #[serde(default)]
@@ -29,7 +32,26 @@ pub fn start_https() -> Result<()> {
   let proto = proto::Server::new(Http::new(), tls_cx);
   let addr = "127.0.0.1:8080".parse()?;
 
-  println!("Listening on {}", addr);
+  fern::Dispatch::new()
+    .level(LogLevelFilter::Debug)
+    /*
+    .level_for("gotham", LogLevelFilter::Debug)
+    .level_for("gotham::state", LogLevelFilter::Debug)
+    .level_for("gotham::start", LogLevelFilter::Debug)
+    .level_for("server", LogLevelFilter::Debug)
+    */
+    .chain(::std::io::stdout())
+    .format(|out, message, record| {
+      out.finish(format_args!("{}[{}][{}]{}",
+                              Utc::now().format("[%Y-%m-%d %H:%M:%S%.9f]"),
+                              record.target(),
+                              record.level(),
+                              message))
+    })
+    .apply()
+    .unwrap();
+
+  info!("Listening on {}", addr);
   let srv = TcpServer::new(proto, addr);
   Ok(srv.serve(|| Ok(new_https_service())))
 }
@@ -124,8 +146,8 @@ mod router {
     Box::new(route)
   }
 
-  fn session_middleware() -> NewSessionMiddleware<MemoryBackend, super::Session> {
-    NewSessionMiddleware::default().with_session_type::<super::Session>()
+  fn session_middleware() -> NewSessionMiddleware<MemoryBackend, super::D2Session> {
+    NewSessionMiddleware::default().with_session_type::<super::D2Session>()
   }
 
   fn oauth_config_middleware() -> super::app_config::New {
@@ -173,7 +195,7 @@ mod app_config {
         refresh_token: "".to_owned(),
       };
 
-      println!("AppConfig: putting config in state");
+      debug!("AppConfig: putting config in state");
       state.put(cfg);
       Box::new(future::ok(state).and_then(|state| chain(state, request)))
     }
@@ -209,9 +231,9 @@ mod require_authn {
             Self: Sized
     {
       let response = {
-        println!("Require Authn: Getting session from state");
+        debug!("Require Authn: Getting session from state");
         let cfg = state.borrow::<AppConfig>().unwrap();
-        let session = state.borrow::<super::Session>().unwrap();
+        let session = state.borrow::<super::D2Session>().unwrap();
         if session.access_token == "".to_owned() {
           Some(redirect_response(cfg))
         } else {
@@ -278,7 +300,7 @@ mod oauth_receiver {
       let cfg = state.borrow::<AppConfig>().ok_or(format_err!("No app config in state?"))?;
       oauth::extract_token(cfg, req)?
     };
-    let session = state.borrow_mut::<super::Session>().ok_or(format_err!("No session?"))?;
+    let session = state.borrow_mut::<super::D2Session>().ok_or(format_err!("No session?"))?;
     session.access_token = token.access_token;
     session.refresh_token = token.refresh_token.unwrap_or_default();
     Ok(())

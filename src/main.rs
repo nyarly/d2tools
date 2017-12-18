@@ -28,6 +28,11 @@ extern crate gotham;
 extern crate gotham_derive;
 extern crate mime;
 extern crate futures_cpupool;
+extern crate fern;
+#[macro_use]
+extern crate log;
+extern crate chrono;
+
 
 mod state;
 mod oauth;
