@@ -128,8 +128,8 @@ mod router {
     NewSessionMiddleware::default().with_session_type::<super::Session>()
   }
 
-  fn oauth_config_middleware() -> super::oauth_config::New {
-    super::oauth_config::New {}
+  fn oauth_config_middleware() -> super::app_config::New {
+    super::app_config::New {}
   }
 
   fn require_auth_middleware() -> super::require_authn::New {
@@ -137,7 +137,7 @@ mod router {
   }
 }
 
-mod oauth_config {
+mod app_config {
   use gotham::middleware::{NewMiddleware, Middleware};
   use gotham::state::State;
   use hyper::Request;
@@ -173,6 +173,7 @@ mod oauth_config {
         refresh_token: "".to_owned(),
       };
 
+      println!("AppConfig: putting config in state");
       state.put(cfg);
       Box::new(future::ok(state).and_then(|state| chain(state, request)))
     }
@@ -208,6 +209,7 @@ mod require_authn {
             Self: Sized
     {
       let response = {
+        println!("Require Authn: Getting session from state");
         let session = state.borrow::<super::Session>().unwrap();
         if session.access_token == "".to_owned() {
           let cfg = state.borrow::<AppConfig>().unwrap();
