@@ -82,7 +82,7 @@ mod router {
     let ps = finalize_pipeline_set(ps_builder);
 
     let bare_pipeline = (global, ());
-    let normal_pipeline = (req_authn, bare_pipeline);
+    let normal_pipeline = (req_authn, (global, ()));
 
     let mut builder = TreeBuilder::new();
     let mut oauth = NodeBuilder::new("oauth", SegmentType::Static);
@@ -210,9 +210,9 @@ mod require_authn {
     {
       let response = {
         println!("Require Authn: Getting session from state");
+        let cfg = state.borrow::<AppConfig>().unwrap();
         let session = state.borrow::<super::Session>().unwrap();
         if session.access_token == "".to_owned() {
-          let cfg = state.borrow::<AppConfig>().unwrap();
           Some(redirect_response(cfg))
         } else {
           None

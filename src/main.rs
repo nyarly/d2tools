@@ -36,8 +36,6 @@ mod errors;
 mod table;
 mod server;
 
-use errors::*;
-
 fn main() {
   use ::std::io::Write;
 
