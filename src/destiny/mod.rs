@@ -20,7 +20,6 @@ mod headers;
 mod dtos;
 
 use self::dtos::enums;
-use super::state;
 
 fn build_client(core: &Core) -> Result<Client<HttpsConnector<HttpConnector>, Body>> {
   let handle = core.handle();
@@ -64,7 +63,7 @@ where U::Target: Sized + Clone,
 {
   match res {
     Ok(it) => Ok((*it).clone()),
-    Err(e) => bail!("{}", *e)
+    Err(e) => bail!("{:?}", *e)
   }
 }
 
@@ -89,10 +88,10 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
     .and_then(|urlpath| {
       let dbpath = cache_path(&database_name_from_path(&urlpath)?)?;
       let urlstr = format!("https://www.bungie.net{}", urlpath);
-      println!("Expecting db at {:?}", dbpath);
+      error!("Expecting db at {:?}", dbpath);
       Ok(
         if !dbpath.is_file() {
-          println!("DB not present - downloading...");
+          info!("DB not present - downloading...");
           Some(
             future::lazy(move || Ok(urlstr.parse()?))
               .and_then(|url| content_client.get(url).map_err(|e| Error::from(e)) )
@@ -286,15 +285,16 @@ impl AuthGetter {
                 match result.status() {
                   hyper::StatusCode::Ok => Ok(result),
                   hyper::StatusCode::Unauthorized => {
-                    let mut state = state::load().unwrap();
-                    state.access_token = String::new();
-                    state.refresh_token = String::new();
-                    state::save(state)?;
+                    // XXX need to actually scrub the old token.
+                    error!("Unauthorized!");
                     bail!("unauthorized - old token scrubbed, rerun.")
                   }
-                  _ => bail!("Other status..."),
-                }
-              })
+                  _ => {
+                    info!("Other status: {}", result.status());
+                    bail!("Other status from API: {}", result.status())
+                  }
+              }
+            })
               .and_then(|res| {
                 res.body().concat2().map_err(|e| Error::from(e))
               })
@@ -317,8 +317,8 @@ use std::fmt::Debug;
 
 fn write_body<T: AsRef<Path> + Debug + Clone>(path: T, chunk: &hyper::Chunk) {
   match maybe_write_body(path.clone(), chunk) {
-    Ok(_) => println!("Wrote debug data to {:?}", path),
-    Err(e) => println!("Error writing debug data: {:?}", e)
+    Ok(_) => debug!("Wrote debug data to {:?}", path),
+    Err(e) => debug!("Error writing debug data: {:?}", e)
   }
 }
 fn maybe_write_body<T: AsRef<Path> + Debug + Clone>(path: T, chunk: &hyper::Chunk) -> Result<()> {

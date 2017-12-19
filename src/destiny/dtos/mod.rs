@@ -27,9 +27,9 @@ macro_rules! body_wrapper{
   impl Deser for $outer {
     fn deser(value: Download) -> Result<$outer> {
       let (outurl, json_out, body_chunk) = value;
-      println!("{}", outurl);
+      info!("Derializing: {}", outurl);
       write_body(&json_out, &body_chunk);
-      Ok(serde_json::from_slice(&body_chunk).with_context(|_| format!("deserializing JSON: recorded at {:?}", json_out))?)
+      Ok(serde_json::from_slice(&body_chunk).with_context(|_| format!("deserializing JSON: Source URL: {} recorded at {:?}", outurl, json_out))?)
     }
   }
   }
@@ -180,6 +180,7 @@ impl ItemResponse {
     match self.item.clone().and_then(|i| Some(i.data.state)).unwrap_or(enums::ItemState::None) {
       enums::ItemState::Locked => status.push('L'),
       enums::ItemState::Tracked => status.push('T'),
+      enums::ItemState::Masterwork => status.push('M'),
       enums::ItemState::None => status.push(' '),
     }
     status

@@ -34,6 +34,9 @@ pub fn start_https() -> Result<()> {
 
   fern::Dispatch::new()
     .level(LogLevelFilter::Debug)
+    .level_for("tokio_core::reactor", LogLevelFilter::Error)
+    .level_for("tokio_core", LogLevelFilter::Error)
+    .level_for("tokio_proto::streaming::pipeline::advanced", LogLevelFilter::Error)
     /*
     .level_for("gotham", LogLevelFilter::Debug)
     .level_for("gotham::state", LogLevelFilter::Debug)
@@ -42,8 +45,8 @@ pub fn start_https() -> Result<()> {
     */
     .chain(::std::io::stdout())
     .format(|out, message, record| {
-      out.finish(format_args!("{}[{}][{}]{}",
-                              Utc::now().format("[%Y-%m-%d %H:%M:%S%.9f]"),
+      out.finish(format_args!("[{}] {}[{}] {}",
+                              Utc::now().format("%Y-%m-%d %H:%M:%S%.9f"),
                               record.target(),
                               record.level(),
                               message))
@@ -213,6 +216,8 @@ mod require_authn {
   use oauth;
   use errors::*;
   use gotham::handler::IntoHandlerFuture;
+  use gotham::middleware::session::SessionData;
+  use gotham::state::FromState;
 
   pub struct New {}
 
@@ -233,7 +238,7 @@ mod require_authn {
       let response = {
         debug!("Require Authn: Getting session from state");
         let cfg = state.borrow::<AppConfig>().unwrap();
-        let session = state.borrow::<super::D2Session>().unwrap();
+        let session = SessionData::<super::D2Session>::borrow_from(&state);
         if session.access_token == "".to_owned() {
           Some(redirect_response(cfg))
         } else {
@@ -246,9 +251,10 @@ mod require_authn {
           match result {
             Ok(r) => (state, r).into_handler_future(),
             Err(e) => {
+              error!("Require Authn: {}", e);
               let res = Response::new()
                 .with_status(StatusCode::InternalServerError)
-                .with_body(format!("{}", e))
+                .with_body(format!("Require Authn: {}", e))
                 .with_header(ContentType::plaintext());
               (state, res).into_handler_future()
             }
@@ -275,6 +281,8 @@ mod oauth_receiver {
   use state::AppConfig;
   use oauth;
   use errors::*;
+  use gotham::middleware::session::SessionData;
+  use gotham::state::FromState;
 
   pub fn handler(mut gstate: State, req: Request) -> (State, Response) {
     let token_res = {
@@ -286,11 +294,11 @@ mod oauth_receiver {
         (gstate, Response::new()
                     .with_status(StatusCode::Found)
                     .with_header(Location::new("/"))),
-      Err(_) => {
+      Err(e) => {
         (gstate,
          Response::new()
            .with_status(StatusCode::NotFound)
-           .with_body("Something went wrong getting the code and state.\n"))
+           .with_body(format!("Something went wrong getting the code and state: {}\n", e)))
       }
     }
   }
@@ -300,7 +308,7 @@ mod oauth_receiver {
       let cfg = state.borrow::<AppConfig>().ok_or(format_err!("No app config in state?"))?;
       oauth::extract_token(cfg, req)?
     };
-    let session = state.borrow_mut::<super::D2Session>().ok_or(format_err!("No session?"))?;
+    let session = SessionData::<super::D2Session>::borrow_mut_from(state);
     session.access_token = token.access_token;
     session.refresh_token = token.refresh_token.unwrap_or_default();
     Ok(())
@@ -308,7 +316,6 @@ mod oauth_receiver {
 }
 
 mod inventory {
-  use ::state;
   use ::destiny;
   use errors::*;
   use gotham::state::State;
@@ -316,27 +323,33 @@ mod inventory {
   use hyper::server::{Request, Response};
   use hyper::StatusCode;
   use mime;
+  use gotham::middleware::session::SessionData;
+  use gotham::state::FromState;
+  use state::AppConfig;
 
   pub fn handler(gstate: State, _req: Request) -> (State, Response) {
-    let res = match body() {
+    debug!("Assembling inventory");
+    let res = match body(&gstate) {
       Ok(string) => {
         create_response(&gstate,
                         StatusCode::Ok,
                         Some((string.into_bytes(), mime::TEXT_PLAIN)))
       }
       Err(e) => {
+        error!("{}", e);
         create_response(&gstate,
                         StatusCode::InternalServerError,
-                        Some((format!("{}", e).into_bytes(), mime::TEXT_PLAIN)))
+                        Some((format!("{:?}", e).into_bytes(), mime::TEXT_PLAIN)))
       }
     };
 
     (gstate, res)
   }
 
-  fn body() -> Result<String> {
-    let state = state::load()?;
+  fn body(state: &State) -> Result<String> {
+    let cfg = state.borrow::<AppConfig>().ok_or(format_err!("No app config in state?"))?;
+    let session = SessionData::<super::D2Session>::borrow_from(state);
     Ok(format!("{}",
-               destiny::api_exchange(state.access_token, state.api_key)?))
+               destiny::api_exchange(session.access_token.clone(), cfg.api_key.clone())?))
   }
 }
