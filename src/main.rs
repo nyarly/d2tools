@@ -32,6 +32,7 @@ extern crate fern;
 #[macro_use]
 extern crate log;
 extern crate chrono;
+extern crate hyper_staticfile;
 
 
 mod state;

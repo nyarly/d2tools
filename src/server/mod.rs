@@ -21,6 +21,7 @@ mod app_config;
 mod require_authn;
 mod oauth_receiver;
 mod inventory;
+mod static_files;
 
 #[derive(Default,Serialize,Deserialize,StateData)]
 struct D2Session {
@@ -38,23 +39,7 @@ pub fn start_https() -> Result<()> {
   let proto = proto::Server::new(Http::new(), tls_cx);
   let addr = "127.0.0.1:8080".parse()?;
 
-  fern::Dispatch::new()
-    .level(LogLevelFilter::Debug)
-    .level_for("tokio_core::reactor", LogLevelFilter::Error)
-    .level_for("tokio_core", LogLevelFilter::Error)
-    .level_for("tokio_proto::streaming::pipeline::advanced",
-               LogLevelFilter::Error)
-    .chain(::std::io::stdout())
-    .format(|out, message, record| {
-      out.finish(format_args!("[{}] {}[{}] {}",
-                              Utc::now().format("%Y-%m-%d %H:%M:%S%.9f"),
-                              record.target(),
-                              record.level(),
-                              message))
-    })
-    .apply()
-    .unwrap();
-
+  configure_logging();
   info!("Listening on {}", addr);
   let srv = TcpServer::new(proto, addr);
   Ok(srv.serve(|| Ok(new_https_service())))
@@ -77,4 +62,23 @@ impl tokio_service::Service for HTTPSService {
   fn call(&self, req: Self::Request) -> Self::Future {
     self.http.call(req)
   }
+}
+
+fn configure_logging() {
+  fern::Dispatch::new()
+    .level(LogLevelFilter::Debug)
+    .level_for("tokio_core::reactor", LogLevelFilter::Error)
+    .level_for("tokio_core", LogLevelFilter::Error)
+    .level_for("tokio_proto::streaming::pipeline::advanced",
+               LogLevelFilter::Error)
+    .chain(::std::io::stdout())
+    .format(|out, message, record| {
+      out.finish(format_args!("[{}] {}[{}] {}",
+                              Utc::now().format("%Y-%m-%d %H:%M:%S%.9f"),
+                              record.target(),
+                              record.level(),
+                              message))
+    })
+    .apply()
+    .unwrap();
 }
