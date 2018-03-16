@@ -8,7 +8,7 @@ use tokio_proto::TcpServer;
 use tokio_service;
 use futures_cpupool::CpuFuture;
 
-use gotham::handler::NewHandlerService;
+use gotham::service::GothamService;
 
 use gotham::router::Router;
 use gotham;
@@ -46,11 +46,11 @@ pub fn start_https() -> Result<()> {
 }
 
 fn new_https_service() -> HTTPSService {
-  HTTPSService { http: NewHandlerService::new(router::new()) }
+  HTTPSService { http: GothamService::new(router::new()) }
 }
 
 struct HTTPSService {
-  http: NewHandlerService<Router>,
+  http: GothamService<Router>,
 }
 
 impl tokio_service::Service for HTTPSService {

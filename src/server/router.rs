@@ -1,13 +1,13 @@
 use gotham::router::Router;
-use gotham::router::route::dispatch::{new_pipeline_set, finalize_pipeline_set, PipelineSet,
-                                      PipelineHandleChain, DispatcherImpl};
-use gotham::middleware::pipeline::new_pipeline;
+use gotham::router::route::dispatch::{PipelineHandleChain, DispatcherImpl};
+use gotham::pipeline::set::{PipelineSet, finalize_pipeline_set, new_pipeline_set};
+use gotham::pipeline::new_pipeline;
 use gotham::router::tree::TreeBuilder;
 use gotham::router::tree::node::{NodeBuilder, SegmentType};
 
 use hyper::Method;
-use gotham::router::request::path::NoopPathExtractor;
-use gotham::router::request::query_string::NoopQueryStringExtractor;
+use gotham::extractor::NoopPathExtractor;
+use gotham::extractor::NoopQueryStringExtractor;
 use gotham::router::response::finalizer::ResponseFinalizerBuilder;
 use gotham::handler::NewHandler;
 use gotham::router::route::{Extractors, Route, RouteImpl, Delegation};
