@@ -1,4 +1,4 @@
-use hyper::{self, Request};
+use hyper::{self, Uri};
 use oauth2::{Config, Token};
 use rand::{self, Rng};
 use base64;
@@ -29,9 +29,9 @@ fn oauth_config(url: &str, cfg: &AppConfig) -> Config {
     .collect::<Vec<_>>()))
 }
 
-pub fn extract_token(cfg: &AppConfig, req: Request) -> Result<Token> {
-  let code = value_from_query(req.uri(), "code")?;
-  let state = value_from_query(req.uri(), "state")?;
+pub fn extract_token(cfg: &AppConfig, uri: &Uri) -> Result<Token> {
+  let code = value_from_query(uri, "code")?;
+  let state = value_from_query(uri, "state")?;
 
   println!("Oauth code:\n{}\n", code);
   println!("Echoed state:\n{}\n", state);

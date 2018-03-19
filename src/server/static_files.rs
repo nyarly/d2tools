@@ -1,9 +1,9 @@
 use tokio_core::reactor::Remote;
 use tokio_service::Service;
-use hyper::{Request,Response};
 use hyper_staticfile::Static;
 use gotham::handler::{NewHandler,Handler,HandlerFuture};
 use gotham::state::State;
+use futures::Future;
 
 struct NewStaticFile {
   dir: String,
@@ -15,6 +15,9 @@ impl NewStaticFile {
     NewStaticFile{ dir, handle }
   }
 }
+
+// ???
+impl ::std::panic::RefUnwindSafe for NewStaticFile{}
 
 impl NewHandler for NewStaticFile {
   type Instance = StaticFile;
@@ -38,9 +41,11 @@ impl StaticFile {
   }
 }
 
+
 impl Handler for StaticFile {
-  fn handle(self, state: State, request: Request) -> Box<HandlerFuture> {
-    let inner = Static::new(self.handle, self.dir);
+  fn handle(self, state: State) -> Box<HandlerFuture> {
+    let inner = Static::new(&self.handle.handle()?, self.dir);
+    let request = state.borrow();
     inner.call(request)
       .map(|res| (state, res))
       .map_err(|e| (state, e))

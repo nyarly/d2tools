@@ -45,7 +45,7 @@ mod server;
 fn main() {
   use ::std::io::Write;
 
-  ::std::process::exit(match server::start_https() {
+  ::std::process::exit(match server::start_http() {
     Ok(_) => 0,
     Err(ref e) => {
       write!(&mut ::std::io::stderr(), "{}\n", e).expect("Error writing to stderr");

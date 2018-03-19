@@ -1,4 +1,3 @@
-use gotham;
 use url::Url;
 
 use errors::*;

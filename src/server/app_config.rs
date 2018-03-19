@@ -1,6 +1,5 @@
 use gotham::middleware::{NewMiddleware, Middleware};
 use gotham::state::State;
-use hyper::Request;
 use gotham::handler::HandlerFuture;
 use std::io;
 use std::env;
@@ -19,8 +18,8 @@ impl NewMiddleware for New {
 pub struct Ware {}
 
 impl Middleware for Ware {
-  fn call<Chain>(self, mut state: State, request: Request, chain: Chain) -> Box<HandlerFuture>
-    where Chain: FnOnce(State, Request) -> Box<HandlerFuture> + Send + 'static,
+  fn call<Chain>(self, mut state: State, chain: Chain) -> Box<HandlerFuture>
+    where Chain: FnOnce(State) -> Box<HandlerFuture> +  'static,
           Self: Sized
   {
     let cfg = AppConfig {
@@ -35,6 +34,6 @@ impl Middleware for Ware {
 
     debug!("AppConfig: putting config in state");
     state.put(cfg);
-    Box::new(future::ok(state).and_then(|state| chain(state, request)))
+    Box::new(future::ok(state).and_then(|state| chain(state)))
   }
 }

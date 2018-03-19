@@ -1,6 +1,7 @@
 use gotham::state::State;
-use hyper::server::{Request, Response};
+use hyper::server::{Response};
 use hyper::StatusCode;
+use hyper::Uri;
 use hyper::header::Location;
 use state::AppConfig;
 use oauth;
@@ -8,9 +9,10 @@ use errors::*;
 use gotham::middleware::session::SessionData;
 use gotham::state::FromState;
 
-pub fn handler(mut gstate: State, req: Request) -> (State, Response) {
+pub fn handler(mut gstate: State) -> (State, Response) {
+  let uri = gstate.borrow();
   let token_res = {
-    get_oauth_stuff(&mut gstate, req)
+    get_oauth_stuff(&mut gstate, uri)
   };
 
   match token_res {
@@ -27,10 +29,10 @@ pub fn handler(mut gstate: State, req: Request) -> (State, Response) {
   }
 }
 
-fn get_oauth_stuff(state: &mut State, req: Request) -> Result<()> {
+fn get_oauth_stuff(state: &mut State, uri: &Uri) -> Result<()> {
   let token = {
-    let cfg = state.borrow::<AppConfig>().ok_or(format_err!("No app config in state?"))?;
-    oauth::extract_token(cfg, req)?
+    let cfg = state.try_borrow::<AppConfig>().ok_or(format_err!("No app config in state?"))?;
+    oauth::extract_token(cfg, uri)?
   };
   let session = SessionData::<super::D2Session>::borrow_mut_from(state);
   session.access_token = token.access_token;

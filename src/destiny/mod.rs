@@ -70,8 +70,7 @@ where U::Target: Sized + Clone,
 pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos::ItemResponse>> {
   let mut core = Core::new()?;
 
-  let client = build_client(&core)?;
-  let authd = AuthGetter::new(client, token, app_auth);
+  let authd = AuthGetter::new(&core, token, app_auth);
 
   let content_client = build_client(&core)?;
 
@@ -222,13 +221,6 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
   Ok(core.run(work)?)
 }
 
-struct AuthGetter {
-  client: Client<HttpsConnector<HttpConnector>, Body>,
-  token: String,
-  app_auth: String,
-  json_dir: PathBuf,
-}
-
 struct RequestAction {
   url: hyper::Uri,
   app_auth: String,
@@ -255,12 +247,21 @@ impl Action for RequestAction {
 
 type Download = ( String, OsString, hyper::Chunk);
 
-impl AuthGetter {
-  fn new( client: Client<HttpsConnector<HttpConnector>, Body>, token: String, app_auth: String,) -> AuthGetter {
+struct AuthGetter<'g> {
+  core: &'g Core,
+  client: Client<HttpsConnector<HttpConnector>, Body>,
+  token: String,
+  app_auth: String,
+  json_dir: PathBuf,
+}
+
+impl <'g> AuthGetter<'g> {
+  fn new(core: &Core, token: String, app_auth: String,) -> AuthGetter {
     let mut json_dir = env::temp_dir();
     json_dir.push("d2tools");
     json_dir.push( &rand::thread_rng().gen_ascii_chars().take(8).collect::<String>());
-    AuthGetter{ client, token, app_auth, json_dir }
+    let client = build_client(core).unwrap();
+    AuthGetter{core, client, token, app_auth, json_dir }
   }
 
   // boxed until https://github.com/rust-lang/rust/issues/34511...
@@ -272,7 +273,7 @@ impl AuthGetter {
     let outurl = url.to_string();
     let json_out = self.next_json_path();
 
-    let retry = Retry::spawn( self.client.handle().clone(), backoff, RequestAction{
+    let retry = Retry::spawn( self.core.handle().clone(), backoff, RequestAction{
       url: url,
       app_auth: self.app_auth.clone(),
       token: self.token.clone(),

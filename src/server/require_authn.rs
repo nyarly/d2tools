@@ -1,6 +1,6 @@
 use gotham::middleware::{NewMiddleware, Middleware};
 use gotham::state::State;
-use hyper::{Request, Response, StatusCode};
+use hyper::{Response, StatusCode};
 use hyper::header::*;
 use gotham::handler::HandlerFuture;
 use std::io;
@@ -23,13 +23,13 @@ impl NewMiddleware for New {
 pub struct Ware {}
 
 impl Middleware for Ware {
-  fn call<Chain>(self, state: State, request: Request, chain: Chain) -> Box<HandlerFuture>
-    where Chain: FnOnce(State, Request) -> Box<HandlerFuture> + Send + 'static,
+  fn call<Chain>(self, state: State, chain: Chain) -> Box<HandlerFuture>
+    where Chain: FnOnce(State) -> Box<HandlerFuture> + 'static,
           Self: Sized
   {
     let response = {
       debug!("Require Authn: Getting session from state");
-      let cfg = state.borrow::<AppConfig>().unwrap();
+      let cfg = state.borrow();
       let session = SessionData::<super::D2Session>::borrow_from(&state);
       if session.access_token == "".to_owned() {
         Some(redirect_response(cfg))
@@ -52,7 +52,7 @@ impl Middleware for Ware {
           }
         }
       }
-      None => chain(state, request),
+      None => chain(state),
     }
   }
 }

@@ -1,17 +1,10 @@
 use gotham::router::Router;
-use gotham::router::route::dispatch::{PipelineHandleChain, DispatcherImpl};
-use gotham::pipeline::set::{PipelineSet, finalize_pipeline_set, new_pipeline_set};
+use gotham::router::builder::build_router;
+use gotham::router::builder::DrawRoutes;
+use gotham::router::builder::DefineSingleRoute;
+use gotham::pipeline::set::{finalize_pipeline_set, new_pipeline_set};
 use gotham::pipeline::new_pipeline;
-use gotham::router::tree::TreeBuilder;
-use gotham::router::tree::node::{NodeBuilder, SegmentType};
 
-use hyper::Method;
-use gotham::extractor::NoopPathExtractor;
-use gotham::extractor::NoopQueryStringExtractor;
-use gotham::router::response::finalizer::ResponseFinalizerBuilder;
-use gotham::handler::NewHandler;
-use gotham::router::route::{Extractors, Route, RouteImpl, Delegation};
-use gotham::router::route::matcher::MethodOnlyRouteMatcher;
 use gotham::middleware::session::{NewSessionMiddleware, MemoryBackend};
 
 pub fn new() -> Router {
@@ -28,44 +21,12 @@ pub fn new() -> Router {
   let bare_pipeline = (global, ());
   let normal_pipeline = (req_authn, (global, ()));
 
-  let mut builder = TreeBuilder::new();
-  let mut oauth = NodeBuilder::new("oauth", SegmentType::Static);
-
-  builder.add_route(static_route(vec![Method::Get, Method::Head],
-                                 || Ok(super::inventory::handler),
-                                 normal_pipeline,
-                                 ps.clone()));
-
-  oauth.add_route(static_route(vec![Method::Get, Method::Head],
-                               || Ok(super::oauth_receiver::handler),
-                               bare_pipeline,
-                               ps.clone()));
-
-  builder.add_child(oauth);
-  let tree = builder.finalize();
-
-  let response_finalizer_builder = ResponseFinalizerBuilder::new();
-  let response_finalizer = response_finalizer_builder.finalize();
-  Router::new(tree, response_finalizer)
-}
-
-fn static_route<NH, P, C>(methods: Vec<Method>,
-                          new_handler: NH,
-                          active_pipelines: C,
-                          ps: PipelineSet<P>)
-                          -> Box<Route + Send + Sync>
-  where NH: NewHandler + 'static,
-        C: PipelineHandleChain<P> + Send + Sync + 'static,
-        P: Send + Sync + 'static
-{
-  let matcher = MethodOnlyRouteMatcher::new(methods);
-  let dispatcher = DispatcherImpl::new(new_handler, active_pipelines, ps);
-  let extractors: Extractors<NoopPathExtractor, NoopQueryStringExtractor> = Extractors::new();
-  let route = RouteImpl::new(matcher,
-                             Box::new(dispatcher),
-                             extractors,
-                             Delegation::Internal);
-  Box::new(route)
+  build_router(normal_pipeline, ps, |route| {
+    route.get_or_head("/").to(super::inventory::handler);
+    route.with_pipeline_chain(bare_pipeline, |auth| {
+      auth.get_or_head("/oauth").to(super::oauth_receiver::handler);
+    });
+  })
 }
 
 fn session_middleware() -> NewSessionMiddleware<MemoryBackend, super::D2Session> {
