@@ -9,19 +9,19 @@ use errors::*;
 use gotham::middleware::session::SessionData;
 use gotham::state::FromState;
 
-pub fn handler(mut gstate: State) -> (State, Response) {
-  let uri = gstate.borrow();
+pub fn handler(mut state: State) -> (State, Response) {
   let token_res = {
-    get_oauth_stuff(&mut gstate, uri)
+    let uri = state.take();
+    get_oauth_stuff(&mut state, &uri)
   };
 
   match token_res {
     Ok(()) =>
-      (gstate, Response::new()
+      (state, Response::new()
        .with_status(StatusCode::Found)
        .with_header(Location::new("/"))),
     Err(e) => {
-      (gstate,
+      (state,
        Response::new()
          .with_status(StatusCode::NotFound)
          .with_body(format!("Something went wrong getting the code and state: {}\n", e)))

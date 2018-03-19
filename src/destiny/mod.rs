@@ -7,7 +7,7 @@ use futures::future::{self,Future};
 use hyper::{self, header, Body, Chunk};
 use hyper::client::{Client, Request, HttpConnector};
 use hyper_tls::HttpsConnector;
-use tokio_core::reactor::Core;
+use tokio_core::reactor::{Core,Handle};
 use zip::read::ZipArchive;
 use rusqlite::Connection;
 
@@ -70,9 +70,10 @@ where U::Target: Sized + Clone,
 pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos::ItemResponse>> {
   let mut core = Core::new()?;
 
-  let authd = AuthGetter::new(&core, token, app_auth);
 
   let content_client = build_client(&core)?;
+
+  let authd = AuthGetter::new(&core, token, app_auth);
 
   let database_path = authd.get(urls::get_manifest()?)
     .and_then(|dl| dtos::ManifestResponseBody::deser(dl))
@@ -247,21 +248,22 @@ impl Action for RequestAction {
 
 type Download = ( String, OsString, hyper::Chunk);
 
-struct AuthGetter<'g> {
-  core: &'g Core,
+struct AuthGetter {
+  handle: Handle,
   client: Client<HttpsConnector<HttpConnector>, Body>,
   token: String,
   app_auth: String,
   json_dir: PathBuf,
 }
 
-impl <'g> AuthGetter<'g> {
-  fn new(core: &Core, token: String, app_auth: String,) -> AuthGetter {
+impl  AuthGetter {
+  fn new(core: &Core, token: String, app_auth: String) -> AuthGetter {
     let mut json_dir = env::temp_dir();
     json_dir.push("d2tools");
     json_dir.push( &rand::thread_rng().gen_ascii_chars().take(8).collect::<String>());
     let client = build_client(core).unwrap();
-    AuthGetter{core, client, token, app_auth, json_dir }
+    let handle = core.handle();
+    AuthGetter{handle, client, token, app_auth, json_dir }
   }
 
   // boxed until https://github.com/rust-lang/rust/issues/34511...
@@ -273,7 +275,7 @@ impl <'g> AuthGetter<'g> {
     let outurl = url.to_string();
     let json_out = self.next_json_path();
 
-    let retry = Retry::spawn( self.core.handle().clone(), backoff, RequestAction{
+    let retry = Retry::spawn( self.handle.clone(), backoff, RequestAction{
       url: url,
       app_auth: self.app_auth.clone(),
       token: self.token.clone(),

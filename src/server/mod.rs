@@ -9,7 +9,6 @@ mod app_config;
 mod require_authn;
 mod oauth_receiver;
 mod inventory;
-mod static_files;
 
 #[derive(Default,Serialize,Deserialize,StateData)]
 struct D2Session {
