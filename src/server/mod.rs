@@ -10,7 +10,7 @@ mod require_authn;
 mod oauth_receiver;
 mod inventory;
 
-#[derive(Default,Serialize,Deserialize,StateData)]
+#[derive(Default, Serialize, Deserialize, StateData)]
 struct D2Session {
   #[serde(default)]
   pub access_token: String,
@@ -19,7 +19,7 @@ struct D2Session {
 }
 
 pub fn start_http() -> Result<()> {
-  let addr = "127.0.0.1:8080";
+  let addr = "127.0.0.1:8181";
 
   configure_logging();
 
@@ -31,16 +31,19 @@ fn configure_logging() {
     .level(LogLevelFilter::Debug)
     .level_for("tokio_core::reactor", LogLevelFilter::Error)
     .level_for("tokio_core", LogLevelFilter::Error)
-    .level_for("tokio_proto::streaming::pipeline::advanced",
-               LogLevelFilter::Error)
+    .level_for(
+      "tokio_proto::streaming::pipeline::advanced",
+      LogLevelFilter::Error,
+    )
     .chain(::std::io::stdout())
     .format(|out, message, record| {
-      out.finish( format_args!(
-          "[{}] {}[{}] {}",
-          Utc::now().format("%Y-%m-%d %H:%M:%S%.9f"),
-          record.target(),
-          record.level(),
-          message))
+      out.finish(format_args!(
+        "[{}] {}[{}] {}",
+        Utc::now().format("%Y-%m-%d %H:%M:%S%.9f"),
+        record.target(),
+        record.level(),
+        message
+      ))
     })
     .apply()
     .unwrap();
