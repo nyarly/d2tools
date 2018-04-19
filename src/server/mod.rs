@@ -3,6 +3,7 @@ use errors::*;
 use fern;
 use log::LogLevelFilter;
 use chrono::prelude::*;
+use oauth2::Token;
 
 mod router;
 mod app_config;
@@ -10,12 +11,16 @@ mod require_authn;
 mod oauth_receiver;
 mod inventory;
 
-#[derive(Default, Serialize, Deserialize, StateData)]
+#[derive(Default, Serialize, Deserialize, StateData, Clone)]
 struct D2Session {
   #[serde(default)]
-  pub access_token: String,
-  #[serde(default)]
-  pub refresh_token: String,
+  pub token: Option<Token>,
+}
+
+impl D2Session {
+  fn acquire_token(&mut self, t: Token) {
+    self.token = Some(t);
+  }
 }
 
 pub fn start_http() -> Result<()> {
