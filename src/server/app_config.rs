@@ -1,4 +1,4 @@
-use gotham::middleware::{NewMiddleware, Middleware};
+use gotham::middleware::{Middleware, NewMiddleware};
 use gotham::state::State;
 use gotham::handler::HandlerFuture;
 use std::io;
@@ -19,8 +19,9 @@ pub struct Ware {}
 
 impl Middleware for Ware {
   fn call<Chain>(self, mut state: State, chain: Chain) -> Box<HandlerFuture>
-    where Chain: FnOnce(State) -> Box<HandlerFuture> +  'static,
-          Self: Sized
+  where
+    Chain: FnOnce(State) -> Box<HandlerFuture> + 'static,
+    Self: Sized,
   {
     let cfg = AppConfig {
       canonical_url: env::var("CANONICAL_URL").unwrap_or_default(),

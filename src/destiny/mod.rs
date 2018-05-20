@@ -1,11 +1,6 @@
-use std::env;
-use std::io::{self, Read, Write};
-use std::fs;
-use std::path::{Path, PathBuf};
-use futures::Stream;
-use futures::future::{self, Future};
-use hyper::{self, header, Body, Chunk};
-use hyper::client::{Client, HttpConnector, Request};
+use std::{env, fs, io::{self, Read, Write}, path::{Path, PathBuf}};
+use futures::{Stream, future::{self, Future}};
+use hyper::{self, header, Body, Chunk, client::{Client, HttpConnector, Request}};
 use hyper_tls::HttpsConnector;
 use tokio_core::reactor::{Core, Handle};
 use zip::read::ZipArchive;
@@ -67,17 +62,6 @@ fn store_received_databases(chunk: Chunk) -> Result<()> {
 use self::dtos::Deser;
 use failure::ResultExt;
 
-fn unshare_result<T, U: ::std::ops::Deref, E>(res: ::std::result::Result<U, E>) -> Result<U::Target>
-where
-  U::Target: Sized + Clone,
-  E: ::std::ops::Deref<Target = Error>,
-{
-  match res {
-    Ok(it) => Ok((*it).clone()),
-    Err(e) => bail!("{:?}", *e),
-  }
-}
-
 pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos::ItemResponse>> {
   let mut core = Core::new()?;
 
@@ -85,25 +69,14 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
 
   let authd = AuthGetter::new(&core, token, app_auth);
 
-  let database_path = authd
-    .get(urls::get_manifest()?)
-    .and_then(|dl| dtos::ManifestResponseBody::deser(dl))
-    .and_then(|mrb| {
-      mrb
-        .response
-        .mobile_world_content_paths
-        .get("en")
-        .ok_or(format_err!("No 'en' content!"))
-        .map(|rurl| rurl.clone())
-    })
-    .shared();
-
+  let database_path = fetch_db_path(&authd)?.shared();
   let database_stored = database_path
     .clone()
-    .then(|res| unshare_result::<String, _, _>(res))
+    //.then(|res| unshare_result(res))
+    .map_err(|sherr| format_err!("{:?}",sherr))
     .and_then(|urlpath| {
       let dbpath = cache_path(&database_name_from_path(&urlpath)?)?;
-      let urlstr = format!("https://www.bungie.net{}", urlpath);
+      let urlstr = format!("https://www.bungie.net{}", *urlpath);
       error!("Expecting db at {:?}", dbpath);
       Ok(if !dbpath.is_file() {
         info!("DB not present - downloading...");
@@ -124,7 +97,8 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
     .shared();
 
   let database_name = database_path
-    .then(|res| unshare_result::<String, _, _>(res))
+    //.then(|res| unshare_result(res))
+    .map_err(|sherr| format_err!("{:?}",sherr))
     .and_then(
       |urlpath| Ok(cache_path(&database_name_from_path(&urlpath)?).context("getting content")?),
     )
@@ -144,7 +118,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
 
   let profile = card
     .clone()
-    .then(|res| unshare_result::<dtos::UserInfoCard, _, _>(res))
+    .map_err(|sherr| format_err!("{:?}", sherr))
     .and_then(|card| {
       urls::get_profile(
         card.membership_type,
@@ -166,9 +140,10 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
 
   let equipment_ids = profile
     .clone()
-    .then(|res| unshare_result::<String, _, _>(res))
+    .map_err(|sherr| format_err!("{:?}",sherr))
+    // .then(|res| unshare_result::<String, _, _>(res))
     .and_then(|profile| {
-      profile
+        (*profile).clone()
         .character_equipment
         .ok_or(format_err!("No equipment!"))
     })
@@ -189,9 +164,10 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
 
   let inventory_ids = profile
     .clone()
-    .then(|res| unshare_result::<String, _, _>(res))
+    // .then(|res| unshare_result::<String, _, _>(res))
+    .map_err(|sherr| format_err!("{:?}",sherr))
     .and_then(|profile| {
-      profile
+      (*profile).clone()
         .character_inventories
         .ok_or(format_err!("No inventory!"))
     })
@@ -212,8 +188,9 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
 
   let vault_ids = profile
     .clone()
-    .then(|res| unshare_result::<String, _, _>(res))
-    .and_then(|profile| profile.profile_inventory.ok_or(format_err!("No vault!")))
+    .map_err(|sherr| format_err!("{:?}",sherr))
+    // .then(|res| unshare_result::<String, _, _>(res))
+    .and_then(|profile| (*profile).clone().profile_inventory.ok_or(format_err!("No vault!")))
     .and_then(|vault| {
       Ok(
         vault
@@ -226,7 +203,8 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
     });
 
   let work = card
-    .then(|res| unshare_result::<dtos::UserInfoCard, _, _>(res))
+    // .then(|res| unshare_result::<dtos::UserInfoCard, _, _>(res))
+    .map_err(|sherr| format_err!("{:?}",sherr))
     .join4(equipment_ids, vault_ids, inventory_ids)
     .and_then(|(card, ids, vids, iids)| {
       ids
@@ -237,7 +215,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
           urls::get_item(
             card.membership_type,
             &card.membership_id,
-            &id,
+            id,
             &[
               enums::ComponentType::ItemCommonData,
               enums::ComponentType::ItemInstances,
@@ -253,15 +231,9 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
         urls
           .iter()
           .map(|url| {
-            let database = database_name
-              .clone()
-              .then(|res| unshare_result::<String, _, _>(res))
-              .join(
-                database_stored
-                  .clone()
-                  .then(|res| unshare_result::<String, _, _>(res)),
-              )
-              .and_then(|(name, _)| Ok(Connection::open(name).context("opening DB connection")?));
+            let database = database_name.clone().map_err(|sherr| format_err!("{:?}",sherr))
+              .join( database_stored.clone().map_err(|sherr| format_err!("{:?}",sherr)))
+              .and_then(|(name, _)| Ok(Connection::open((*name).clone()).context("opening DB connection")?));
 
             authd
               .get(url.clone())
@@ -300,6 +272,22 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
     });
 
   Ok(core.run(work)?)
+}
+
+fn fetch_db_path(authd: &AuthGetter) -> Result<impl Future<Item = String, Error = Error>> {
+  Ok(
+    authd
+      .get(urls::get_manifest()?)
+      .and_then(|dl| dtos::ManifestResponseBody::deser(dl))
+      .and_then(|mrb| {
+        mrb
+          .response
+          .mobile_world_content_paths
+          .get("en")
+          .ok_or(format_err!("No 'en' content!"))
+          .map(|rurl| rurl.clone())
+      }),
+  )
 }
 
 struct RequestAction {
@@ -359,8 +347,7 @@ impl AuthGetter {
     }
   }
 
-  // boxed until https://github.com/rust-lang/rust/issues/34511...
-  fn get(&self, url: hyper::Uri) -> Box<Future<Item = Download, Error = Error>> {
+  fn get(&self, url: hyper::Uri) -> impl Future<Item = Download, Error = Error> {
     let backoff = strategy::ExponentialBackoff::from_millis(10)
       .map(strategy::jitter)
       .take(5);
@@ -379,26 +366,24 @@ impl AuthGetter {
       },
     );
 
-    Box::new(
-      retry
-        .map_err(|e| Error::from(Error::from(e).context("network error")))
-        .and_then(|result| {
-          match result.status() {
-            hyper::StatusCode::Ok => Ok(result),
-            hyper::StatusCode::Unauthorized => {
-              // XXX need to actually scrub the old token.
-              error!("Unauthorized!");
-              bail!("unauthorized - old token scrubbed, rerun.")
-            }
-            _ => {
-              info!("Other status: {}", result.status());
-              bail!("Other status from API: {}", result.status())
-            }
+    retry
+      .map_err(|e| Error::from(Error::from(e).context("network error")))
+      .and_then(|result| {
+        match result.status() {
+          hyper::StatusCode::Ok => Ok(result),
+          hyper::StatusCode::Unauthorized => {
+            // XXX need to actually scrub the old token.
+            error!("Unauthorized!");
+            bail!("unauthorized - old token scrubbed, rerun.")
           }
-        })
-        .and_then(|res| res.body().concat2().map_err(|e| Error::from(e)))
-        .and_then(move |body_chunk| Ok((outurl, json_out, body_chunk))),
-    )
+          _ => {
+            info!("Other status: {}", result.status());
+            bail!("Other status from API: {}", result.status())
+          }
+        }
+      })
+      .and_then(|res| res.body().concat2().map_err(|e| Error::from(e)))
+      .and_then(move |body_chunk| Ok((outurl, json_out, body_chunk)))
   }
 
   fn next_json_path(&self) -> OsString {
