@@ -1,10 +1,12 @@
 use std::{env, fs, io::{self, Read, Write}, path::{Path, PathBuf}};
-use futures::{Stream, future::{self, Future}};
+use futures::{Stream, future::{self, Future, Shared, SharedItem}};
 use hyper::{self, header, Body, Chunk, client::{Client, HttpConnector, Request}};
 use hyper_tls::HttpsConnector;
 use tokio_core::reactor::{Core, Handle};
 use zip::read::ZipArchive;
 use rusqlite::Connection;
+
+use failure::ResultExt;
 
 use errors::*;
 
@@ -14,15 +16,42 @@ mod urls;
 mod headers;
 mod dtos;
 
+use self::dtos::Deser;
 use self::dtos::enums;
 
-fn build_client(core: &Core) -> Result<Client<HttpsConnector<HttpConnector>, Body>> {
-  let handle = core.handle();
-  Ok(
-    Client::configure()
-      .connector(HttpsConnector::new(4, &handle)?)
-      .build(&handle),
-  )
+pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos::ItemResponse>> {
+  let mut core = Core::new()?;
+  let content_client = build_client(&core)?;
+  let authd = AuthGetter::new(&core, token, app_auth);
+
+  let database_path = fetch_db_path(&authd)?.shared();
+  let database_stored = store_db(clone_unshare(&database_path), content_client)?.shared();
+  let database_name = get_db_name(unshare(database_path))?.shared();
+
+  let user_card = fetch_card(&authd)?.shared();
+  let profile = fetch_profile(clone_unshare(&user_card), &authd)?.shared();
+
+  let equipment_ids = extract_equipment_ids(clone_unshare(&profile));
+  let inventory_ids = extract_inventory_ids(clone_unshare(&profile));
+  let vault_ids = extract_vault_ids(clone_unshare(&profile));
+
+  let urls = map_urls(unshare(user_card), equipment_ids, vault_ids, inventory_ids);
+  let items = fetch_all_items(&authd, urls, database_name, database_stored);
+  let work = table_format(items);
+
+  Ok(core.run(work)?)
+}
+
+fn unshare<T>(
+  future: impl Future<Item = T, Error = impl Debug>,
+) -> impl Future<Item = T, Error = Error> {
+  future.map_err(|sherr| format_err!("{:?}", sherr))
+}
+
+fn clone_unshare<T>(
+  future: &(impl Future<Item = T, Error = impl Debug> + Clone),
+) -> impl Future<Item = T, Error = Error> {
+  future.clone().map_err(|sherr| format_err!("{:?}", sherr))
 }
 
 fn cache_path(filename: &str) -> Result<PathBuf> {
@@ -32,6 +61,15 @@ fn cache_path(filename: &str) -> Result<PathBuf> {
   path.push("d2tools");
   path.push(filename);
   Ok(path)
+}
+
+fn build_client(core: &Core) -> Result<Client<HttpsConnector<HttpConnector>, Body>> {
+  let handle = core.handle();
+  Ok(
+    Client::configure()
+      .connector(HttpsConnector::new(4, &handle)?)
+      .build(&handle),
+  )
 }
 
 fn database_name_from_path(path: &str) -> Result<String> {
@@ -59,91 +97,107 @@ fn store_received_databases(chunk: Chunk) -> Result<()> {
   Ok(())
 }
 
-use self::dtos::Deser;
-use failure::ResultExt;
+fn fetch_db_path(authd: &AuthGetter) -> Result<impl Future<Item = String, Error = Error>> {
+  Ok(
+    authd
+      .get(urls::get_manifest()?)
+      .and_then(|dl| dtos::ManifestResponseBody::deser(dl))
+      .and_then(|mrb| {
+        mrb
+          .response
+          .mobile_world_content_paths
+          .get("en")
+          .ok_or(format_err!("No 'en' content!"))
+          .map(|rurl| rurl.clone())
+      }),
+  )
+}
 
-pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos::ItemResponse>> {
-  let mut core = Core::new()?;
-
-  let content_client = build_client(&core)?;
-
-  let authd = AuthGetter::new(&core, token, app_auth);
-
-  let database_path = fetch_db_path(&authd)?.shared();
-  let database_stored = database_path
-    .clone()
-    //.then(|res| unshare_result(res))
-    .map_err(|sherr| format_err!("{:?}",sherr))
-    .and_then(|urlpath| {
-      let dbpath = cache_path(&database_name_from_path(&urlpath)?)?;
-      let urlstr = format!("https://www.bungie.net{}", *urlpath);
-      error!("Expecting db at {:?}", dbpath);
-      Ok(if !dbpath.is_file() {
-        info!("DB not present - downloading...");
-        Some(
-          future::lazy(move || Ok(urlstr.parse()?))
-            .and_then(|url| content_client.get(url).map_err(|e| Error::from(e)))
-            .and_then(|res| res.body().concat2().map_err(|e| Error::from(e)))
-            .and_then(
-              |body_chunk| Ok(store_received_databases(body_chunk).with_context(|_| "storing db")?),
-            ),
-        )
-      } else {
-        None
+fn store_db(
+  db_path: impl Future<Item = SharedItem<String>, Error = Error>,
+  content_client: hyper::Client<HttpsConnector<HttpConnector>, Body>,
+) -> Result<impl Future<Error = Error>> {
+  Ok(
+    db_path
+      .and_then(move |urlpath| {
+        let dbpath = cache_path(&database_name_from_path(&urlpath)?)?;
+        let urlstr = format!("https://www.bungie.net{}", *urlpath);
+        error!("Expecting db at {:?}", dbpath);
+        Ok(if !dbpath.is_file() {
+          info!("DB not present - downloading...");
+          Some(
+            future::lazy(move || Ok(urlstr.parse()?))
+              .and_then(move |url| content_client.get(url).map_err(|e| Error::from(e)))
+              .and_then(|res| res.body().concat2().map_err(|e| Error::from(e)))
+              .and_then(
+                |body_chunk| Ok(store_received_databases(body_chunk).with_context(|_| "storing db")?),
+              ),
+          )
+        } else {
+          None
+        })
       })
-    })
-    .flatten()
-    .and_then(|_| Ok(println!("DB available")))
-    .shared();
+      .flatten()
+      .and_then(|_| Ok(println!("DB available"))),
+  )
+}
 
-  let database_name = database_path
-    //.then(|res| unshare_result(res))
-    .map_err(|sherr| format_err!("{:?}",sherr))
-    .and_then(
-      |urlpath| Ok(cache_path(&database_name_from_path(&urlpath)?).context("getting content")?),
-    )
-    .shared();
+fn get_db_name(
+  database_path: impl Future<Item = SharedItem<String>, Error = Error>,
+) -> Result<impl Future<Item = PathBuf, Error = Error>> {
+  Ok(database_path.and_then(|urlpath| {
+    Ok(cache_path(&database_name_from_path(&urlpath)?).context("getting content")?)
+  }))
+}
 
-  let card = authd
-    .get(urls::get_membership_data_for_current_user()?)
-    .and_then(|dl| dtos::UserResponseBody::deser(dl))
-    .and_then(|urb| {
-      let res: Result<_> = match urb.response.destiny_memberships.get(0) {
-        Some(membership) => Ok(membership.clone()),
-        None => bail!("No memberships!"),
-      };
-      res
-    })
-    .shared();
+fn fetch_card(authd: &AuthGetter) -> Result<impl Future<Item = dtos::UserInfoCard, Error = Error>> {
+  Ok(
+    authd
+      .get(urls::get_membership_data_for_current_user()?)
+      .and_then(|dl| dtos::UserResponseBody::deser(dl))
+      .and_then(|urb| {
+        let res: Result<_> = match urb.response.destiny_memberships.get(0) {
+          Some(membership) => Ok(membership.clone()),
+          None => bail!("No memberships!"),
+        };
+        res
+      }),
+  )
+}
 
-  let profile = card
-    .clone()
-    .map_err(|sherr| format_err!("{:?}", sherr))
-    .and_then(|card| {
-      urls::get_profile(
-        card.membership_type,
-        card.id()?,
-        &[
-          enums::ComponentType::ProfileInventories,
-          enums::ComponentType::Profiles,
-          enums::ComponentType::Characters,
-          enums::ComponentType::CharacterInventories,
-          enums::ComponentType::CharacterEquipment,
-          enums::ComponentType::Kiosks,
-        ],
-      )
-    })
-    .and_then(|url| authd.get(url))
-    .and_then(|dl| dtos::ProfileResponseBody::deser(dl))
-    .map(|body| body.response)
-    .shared();
+fn fetch_profile<'g>(
+  card: impl Future<Item = SharedItem<dtos::UserInfoCard>, Error = Error> + 'g,
+  authd: &'g AuthGetter,
+) -> Result<impl Future<Item = dtos::DestinyProfileResponse, Error = Error> + 'g> {
+  Ok(
+    card
+      .and_then(|card| {
+        urls::get_profile(
+          card.membership_type,
+          card.id()?,
+          &[
+            enums::ComponentType::ProfileInventories,
+            enums::ComponentType::Profiles,
+            enums::ComponentType::Characters,
+            enums::ComponentType::CharacterInventories,
+            enums::ComponentType::CharacterEquipment,
+            enums::ComponentType::Kiosks,
+          ],
+        )
+      })
+      .and_then(move |url| authd.get(url))
+      .and_then(|dl| dtos::ProfileResponseBody::deser(dl))
+      .map(|body| body.response),
+  )
+}
 
-  let equipment_ids = profile
-    .clone()
-    .map_err(|sherr| format_err!("{:?}",sherr))
-    // .then(|res| unshare_result::<String, _, _>(res))
+fn extract_equipment_ids(
+  profile: impl Future<Item = SharedItem<dtos::DestinyProfileResponse>, Error = Error>,
+) -> impl Future<Item = Vec<String>, Error = Error> {
+  profile
     .and_then(|profile| {
-        (*profile).clone()
+      (*profile)
+        .clone()
         .character_equipment
         .ok_or(format_err!("No equipment!"))
     })
@@ -160,14 +214,16 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
           })
           .collect::<Vec<_>>(),
       )
-    });
+    })
+}
 
-  let inventory_ids = profile
-    .clone()
-    // .then(|res| unshare_result::<String, _, _>(res))
-    .map_err(|sherr| format_err!("{:?}",sherr))
+fn extract_inventory_ids(
+  profile: impl Future<Item = SharedItem<dtos::DestinyProfileResponse>, Error = Error>,
+) -> impl Future<Item = Vec<String>, Error = Error> {
+  profile
     .and_then(|profile| {
-      (*profile).clone()
+      (*profile)
+        .clone()
         .character_inventories
         .ok_or(format_err!("No inventory!"))
     })
@@ -184,13 +240,19 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
           })
           .collect::<Vec<_>>(),
       )
-    });
+    })
+}
 
-  let vault_ids = profile
-    .clone()
-    .map_err(|sherr| format_err!("{:?}",sherr))
-    // .then(|res| unshare_result::<String, _, _>(res))
-    .and_then(|profile| (*profile).clone().profile_inventory.ok_or(format_err!("No vault!")))
+fn extract_vault_ids(
+  profile: impl Future<Item = SharedItem<dtos::DestinyProfileResponse>, Error = Error>,
+) -> impl Future<Item = Vec<String>, Error = Error> {
+  profile
+    .and_then(|profile| {
+      (*profile)
+        .clone()
+        .profile_inventory
+        .ok_or(format_err!("No vault!"))
+    })
     .and_then(|vault| {
       Ok(
         vault
@@ -200,11 +262,16 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
           .filter_map(|it| it.item_instance_id.clone().map(|id| id))
           .collect::<Vec<_>>(),
       )
-    });
+    })
+}
 
-  let work = card
-    // .then(|res| unshare_result::<dtos::UserInfoCard, _, _>(res))
-    .map_err(|sherr| format_err!("{:?}",sherr))
+fn map_urls(
+  card: impl Future<Item = SharedItem<dtos::UserInfoCard>, Error = Error>,
+  equipment_ids: impl Future<Item = Vec<String>, Error = Error>,
+  vault_ids: impl Future<Item = Vec<String>, Error = Error>,
+  inventory_ids: impl Future<Item = Vec<String>, Error = Error>,
+) -> impl Future<Item = Vec<hyper::Uri>, Error = Error> {
+  card
     .join4(equipment_ids, vault_ids, inventory_ids)
     .and_then(|(card, ids, vids, iids)| {
       ids
@@ -226,29 +293,45 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
         })
         .collect::<Result<Vec<_>>>()
     })
-    .and_then(|urls| {
-      future::join_all(
-        urls
-          .iter()
-          .map(|url| {
-            let database = database_name.clone().map_err(|sherr| format_err!("{:?}",sherr))
-              .join( database_stored.clone().map_err(|sherr| format_err!("{:?}",sherr)))
-              .and_then(|(name, _)| Ok(Connection::open((*name).clone()).context("opening DB connection")?));
+}
 
-            authd
-              .get(url.clone())
-              .and_then(|dl| dtos::ItemResponseBody::deser(dl))
-              .map(|res| res.response)
-              .join(database)
-              .and_then(|(ref mut item, ref db)| {
-                item.fetch_component_defs(db);
-                let item: dtos::ItemResponse = item.clone();
-                Ok(item)
-              })
-          })
-          .collect::<Vec<_>>(),
-      )
-    })
+fn fetch_all_items<'g>(
+  authd: &'g AuthGetter,
+  urls: impl Future<Item = Vec<hyper::Uri>, Error = Error> + 'g,
+  database_name: Shared<impl Future<Item = PathBuf, Error = Error> + 'g>,
+  database_stored: Shared<impl Future<Error = Error> + 'g>,
+) -> impl Future<Item = Vec<dtos::ItemResponse>, Error = Error> + 'g {
+  urls.and_then(move |urls| {
+    future::join_all(
+      urls
+        .iter()
+        .map(|url| {
+          let database = clone_unshare(&database_name)
+            .join(clone_unshare(&database_stored))
+            .and_then(
+              |(name, _)| Ok(Connection::open((*name).clone()).context("opening DB connection")?),
+            );
+
+          authd
+            .get(url.clone())
+            .and_then(|dl| dtos::ItemResponseBody::deser(dl))
+            .map(|res| res.response)
+            .join(database)
+            .and_then(|(ref mut item, ref db)| {
+              item.fetch_component_defs(db);
+              let item: dtos::ItemResponse = item.clone();
+              Ok(item)
+            })
+        })
+        .collect::<Vec<_>>(),
+    )
+  })
+}
+
+fn table_format(
+  items: impl Future<Item = Vec<dtos::ItemResponse>, Error = Error>,
+) -> impl Future<Item = table::Table<dtos::ItemResponse>, Error = Error> {
+  items
     .map(|mut items| {
       items.sort_by(|left, right| {
         left
@@ -269,25 +352,7 @@ pub fn api_exchange(token: String, app_auth: String) -> Result<table::Table<dtos
         .field("Effective Power", dtos::ItemResponse::stat_value)
         .field("Infusion Cat.", dtos::ItemResponse::infusion_category)
         .with_items(populated_items)
-    });
-
-  Ok(core.run(work)?)
-}
-
-fn fetch_db_path(authd: &AuthGetter) -> Result<impl Future<Item = String, Error = Error>> {
-  Ok(
-    authd
-      .get(urls::get_manifest()?)
-      .and_then(|dl| dtos::ManifestResponseBody::deser(dl))
-      .and_then(|mrb| {
-        mrb
-          .response
-          .mobile_world_content_paths
-          .get("en")
-          .ok_or(format_err!("No 'en' content!"))
-          .map(|rurl| rurl.clone())
-      }),
-  )
+    })
 }
 
 struct RequestAction {
